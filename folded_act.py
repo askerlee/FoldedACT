@@ -44,18 +44,43 @@ class FoldedACT(ACT):
             if config.camera_overlay:
                 if len(config.image_features) not in (2, 4):
                     raise ValueError("Camera overlay requires two or four input cameras.")
-                if not use_swin:
-                    raise ValueError("Camera overlay requires Swin.")
             if config.sep_swin_for_views and not use_swin:
                 raise ValueError("Separate Swin blocks require Swin and at least one input camera.")
         super().__init__(config)
+        if isinstance(config, FoldedACTConfig) and config.camera_overlay and config.image_features:
+            self._widen_backbone_conv1(num_stacked_views=2)
         self.pre_fold_swin = None
         self.view_swin_blocks = torch.nn.ModuleList()
         if use_swin and isinstance(config, FoldedACTConfig):
+            num_visual_streams = (
+                len(config.image_features) // 2 if config.camera_overlay else len(config.image_features)
+            )
             if config.sep_swin_for_views:
-                self.view_swin_blocks.extend(self._make_swin() for _ in config.image_features)
+                self.view_swin_blocks.extend(self._make_swin() for _ in range(num_visual_streams))
             else:
                 self.pre_fold_swin = self._make_swin()
+
+    def _widen_backbone_conv1(self, num_stacked_views: int = 2) -> None:
+        conv1 = self.backbone.conv1
+        if not isinstance(conv1, torch.nn.Conv2d):
+            raise TypeError(f"Expected Conv2d at backbone.conv1, got {type(conv1).__name__}")
+        padding = conv1.padding if isinstance(conv1.padding, str) else (conv1.padding[0], conv1.padding[1])
+        widened = torch.nn.Conv2d(
+            in_channels=conv1.in_channels * num_stacked_views,
+            out_channels=conv1.out_channels,
+            kernel_size=(conv1.kernel_size[0], conv1.kernel_size[1]),
+            stride=(conv1.stride[0], conv1.stride[1]),
+            padding=padding,
+            dilation=(conv1.dilation[0], conv1.dilation[1]),
+            groups=conv1.groups,
+            bias=conv1.bias is not None,
+            padding_mode=conv1.padding_mode,
+        )
+        with torch.no_grad():
+            widened.weight.copy_(conv1.weight.repeat(1, num_stacked_views, 1, 1) / num_stacked_views)
+            if conv1.bias is not None and widened.bias is not None:
+                widened.bias.copy_(conv1.bias)
+        self.backbone.conv1 = widened
 
     def _make_swin(self) -> SwinTransformerBlock:
         return SwinTransformerBlock(
@@ -101,7 +126,12 @@ class FoldedACT(ACT):
     def forward(self, batch):
         if not (
             isinstance(self.config, FoldedACTConfig)
-            and (self.config.spatial_folding or self.pre_fold_swin is not None or self.view_swin_blocks)
+            and (
+                self.config.camera_overlay
+                or self.config.spatial_folding
+                or self.pre_fold_swin is not None
+                or self.view_swin_blocks
+            )
             and self.config.image_features
         ):
             return super().forward(batch)
@@ -114,12 +144,14 @@ class FoldedACT(ACT):
         if self.config.env_state_feature:
             prefix.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
-        camera_grids = [self._camera_grid(image, index) for index, image in enumerate(images)]
         if self.config.camera_overlay:
-            camera_grids = [
-                first + second
-                for first, second in zip(camera_grids[::2], camera_grids[1::2], strict=True)
+            camera_inputs = [
+                torch.cat((first, second), dim=1)
+                for first, second in zip(images[::2], images[1::2], strict=True)
             ]
+        else:
+            camera_inputs = images
+        camera_grids = [self._camera_grid(image, index) for index, image in enumerate(camera_inputs)]
         if self.config.spatial_folding:
             camera_grids = [fold_camera_features(grid) for grid in camera_grids]
         camera_tokens = torch.cat([grid.flatten(2).permute(2, 0, 1) for grid in camera_grids], dim=0)

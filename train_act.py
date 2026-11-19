@@ -174,13 +174,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--camera-overlay",
         action="store_true",
-        help="Sum adjacent post-Swin camera pairs (2cams_top_left or all_4cams)",
+        help="Channel-stack adjacent camera pairs into 6-channel ResNet18 conv1 (2cams_top_left or all_4cams)",
     )
     parser.add_argument(
         "--sep-swin-for-views",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Use an independent Swin block per input camera before overlay or folding (default when Swin is enabled)",
+        help="Use an independent Swin block per visual stream before folding (default when Swin is enabled)",
     )
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -201,8 +201,6 @@ def parse_args() -> argparse.Namespace:
     if args.camera_overlay:
         if len(CAMERA_PRESETS[args.camera_preset]) not in (2, 4):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
-        if not args.swin_after_tokenization:
-            parser.error("--camera-overlay requires --swin-after-tokenization")
     if args.sep_swin_for_views and not args.swin_after_tokenization:
         parser.error("--sep-swin-for-views requires --swin-after-tokenization")
     if args.sep_swin_for_views is None:
