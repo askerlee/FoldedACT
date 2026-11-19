@@ -229,6 +229,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--suite-dir", type=str, default="")
     parser.add_argument("--write-policy-md", action="store_true", help="Also write timestamped MD under policy/")
     parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Compile policy.model with torch.compile to speed up training (enabled by default on CUDA)",
+    )
+    parser.add_argument(
+        "--compile-mode",
+        type=str,
+        default="default",
+        choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
+        help="torch.compile mode when --compile is enabled",
+    )
+    parser.add_argument(
         "--wandb",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -335,6 +348,8 @@ def main() -> None:
                 cmd.append("--camera-overlay")
             if not args.sep_swin_for_views:
                 cmd.append("--no-sep-swin-for-views")
+            cmd.append("--compile" if args.compile else "--no-compile")
+            cmd.extend(["--compile-mode", args.compile_mode])
             cmd.append("--wandb" if args.wandb else "--no-wandb")
             cmd.extend(["--wandb-project", args.wandb_project])
             if args.wandb_entity:

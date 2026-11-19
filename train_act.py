@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import math
 import random
@@ -10,7 +11,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Ensure repo root is importable when executed as `python policy/train_act.py`
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +43,7 @@ from policy.stea_act_dataset import (
     compute_train_stats,
     load_reconstructed_trajectories,
 )
-from policy2.folded_act import FoldedACTConfig, FoldedACTPolicy
+from policy2.folded_act import FoldedACT, FoldedACTConfig, FoldedACTPolicy
 
 
 def seed_everything(seed: int) -> None:
@@ -137,6 +138,16 @@ def infinite_dataloader(loader: DataLoader):
             yield batch
 
 
+@contextmanager
+def unwrapped_policy_model(policy: FoldedACTPolicy, raw_model: FoldedACT):
+    current_model = policy.model
+    policy.model = raw_model
+    try:
+        yield policy
+    finally:
+        policy.model = current_model
+
+
 def save_checkpoint_bundle(
     ckpt_dir: Path,
     policy: FoldedACTPolicy,
@@ -144,7 +155,13 @@ def save_checkpoint_bundle(
     metadata: dict[str, Any],
 ) -> None:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    policy.save_pretrained(ckpt_dir)
+    orig_model = policy.model
+    if hasattr(orig_model, "_orig_mod"):
+        policy.model = cast(FoldedACT, orig_model._orig_mod)
+    try:
+        policy.save_pretrained(ckpt_dir)
+    finally:
+        policy.model = orig_model
     torch.save(stats, ckpt_dir / "train_stats.pt")
     save_json(metadata, ckpt_dir / "checkpoint_meta.json")
 
@@ -236,6 +253,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--no-amp", action="store_true", help="Disable bf16 mixed precision")
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Compile policy.model with torch.compile to speed up training (enabled by default on CUDA)",
+    )
+    parser.add_argument(
+        "--compile-mode",
+        type=str,
+        default="default",
+        choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
+        help="torch.compile mode when --compile is enabled",
+    )
     parser.add_argument(
         "--wandb",
         action=argparse.BooleanOptionalAction,
@@ -354,6 +384,14 @@ def main() -> None:
         optimizer, lr_lambda=build_warmup_cosine_lr_lambda(args.steps, args.warmup_steps)
     )
 
+    raw_model = policy.model
+    use_compile = args.compile and device.type == "cuda" and hasattr(torch, "compile")
+    if use_compile:
+        print(f"  torch.compile: enabled (mode={args.compile_mode})")
+        policy.model = cast(FoldedACT, torch.compile(raw_model, mode=args.compile_mode))
+    else:
+        print("  torch.compile: disabled")
+
     gen = torch.Generator()
     gen.manual_seed(args.seed)
     train_loader = DataLoader(
@@ -403,6 +441,8 @@ def main() -> None:
         "kl_weight": args.kl_weight,
         "seed": args.seed,
         "use_bf16_amp": use_amp,
+        "use_torch_compile": use_compile,
+        "compile_mode": args.compile_mode if use_compile else None,
         "train_frames": len(train_ds),
         "val_frames": len(val_ds),
         "test_frames": len(test_ds),
@@ -487,14 +527,15 @@ def main() -> None:
                 running_count = 0
 
             if step % args.eval_freq == 0 or step == args.steps:
-                val_res = evaluate_policy_on_dataset(
-                    policy,
-                    val_ds,
-                    normalizer,
-                    batch_size=args.batch_size,
-                    num_workers=min(args.num_workers, 2),
-                    record_attention=False,
-                )
+                with unwrapped_policy_model(policy, raw_model):
+                    val_res = evaluate_policy_on_dataset(
+                        policy,
+                        val_ds,
+                        normalizer,
+                        batch_size=args.batch_size,
+                        num_workers=min(args.num_workers, 2),
+                        record_attention=False,
+                    )
                 val_chunk_m = val_res["chunk_horizon_metrics"]
                 val_score = val_chunk_m["norm_l1_active8d"]
                 te_m = val_res["temporal_ensemble_metrics"]
@@ -550,6 +591,7 @@ def main() -> None:
                 policy.train()
 
         total_train_sec = time.time() - t_start
+        policy.model = raw_model
         save_checkpoint_bundle(
             out_dir / "checkpoints" / "last",
             policy,
