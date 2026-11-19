@@ -64,6 +64,7 @@ def build_act_config(
     spatial_folding: bool = True,
     swin_after_tokenization: bool = True,
     camera_overlay: bool = False,
+    sep_swin_for_views: bool | None = None,
 ) -> FoldedACTConfig:
     input_features: dict[str, PolicyFeature] = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
@@ -80,6 +81,7 @@ def build_act_config(
         spatial_folding=spatial_folding,
         swin_after_tokenization=swin_after_tokenization,
         camera_overlay=camera_overlay,
+        sep_swin_for_views=swin_after_tokenization if sep_swin_for_views is None else sep_swin_for_views,
         n_obs_steps=1,
         chunk_size=chunk_size,
         n_action_steps=chunk_size,
@@ -174,6 +176,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Sum adjacent post-Swin camera pairs (2cams_top_left or all_4cams)",
     )
+    parser.add_argument(
+        "--sep-swin-for-views",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use an independent Swin block per input camera before overlay or folding (default when Swin is enabled)",
+    )
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--steps", type=int, default=15000)
@@ -195,6 +203,10 @@ def parse_args() -> argparse.Namespace:
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
         if not args.swin_after_tokenization:
             parser.error("--camera-overlay requires --swin-after-tokenization")
+    if args.sep_swin_for_views and not args.swin_after_tokenization:
+        parser.error("--sep-swin-for-views requires --swin-after-tokenization")
+    if args.sep_swin_for_views is None:
+        args.sep_swin_for_views = args.swin_after_tokenization
     return args
 
 
@@ -270,6 +282,7 @@ def main() -> None:
         spatial_folding=args.spatial_folding,
         swin_after_tokenization=args.swin_after_tokenization,
         camera_overlay=args.camera_overlay,
+        sep_swin_for_views=args.sep_swin_for_views,
     )
 
     policy = FoldedACTPolicy(act_cfg).to(device)
@@ -316,6 +329,7 @@ def main() -> None:
         "spatial_folding": act_cfg.spatial_folding,
         "swin_after_tokenization": act_cfg.swin_after_tokenization,
         "camera_overlay": act_cfg.camera_overlay,
+        "sep_swin_for_views": act_cfg.sep_swin_for_views,
         "visual_tokens_per_step": visual_tokens,
         "dof_mode": args.dof_mode,
         "gripper_mode": args.gripper_mode,

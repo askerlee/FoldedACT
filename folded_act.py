@@ -19,6 +19,7 @@ class FoldedACTConfig(ACTConfig):
     swin_after_tokenization: bool = True
     swin_before_folding: bool = False
     camera_overlay: bool = False
+    sep_swin_for_views: bool = False
 
 
 def fold_camera_features(features: Tensor) -> Tensor:
@@ -34,34 +35,46 @@ def fold_camera_features(features: Tensor) -> Tensor:
 
 class FoldedACT(ACT):
     def __init__(self, config: ACTConfig) -> None:
-        if isinstance(config, FoldedACTConfig) and config.camera_overlay:
-            if len(config.image_features) not in (2, 4):
-                raise ValueError("Camera overlay requires two or four input cameras.")
-            if not (config.swin_after_tokenization or (config.spatial_folding and config.swin_before_folding)):
-                raise ValueError("Camera overlay requires Swin.")
+        use_swin = (
+            isinstance(config, FoldedACTConfig)
+            and bool(config.image_features)
+            and (config.swin_after_tokenization or (config.spatial_folding and config.swin_before_folding))
+        )
+        if isinstance(config, FoldedACTConfig):
+            if config.camera_overlay:
+                if len(config.image_features) not in (2, 4):
+                    raise ValueError("Camera overlay requires two or four input cameras.")
+                if not use_swin:
+                    raise ValueError("Camera overlay requires Swin.")
+            if config.sep_swin_for_views and not use_swin:
+                raise ValueError("Separate Swin blocks require Swin and at least one input camera.")
         super().__init__(config)
         self.pre_fold_swin = None
-        if (
-            isinstance(config, FoldedACTConfig)
-            and config.image_features
-            and (config.swin_after_tokenization or (config.spatial_folding and config.swin_before_folding))
-        ):
-            self.pre_fold_swin = SwinTransformerBlock(
-                dim=config.dim_model,
-                num_heads=config.n_heads,
-                window_size=[4, 4],
-                shift_size=[2, 2],
-            )
+        self.view_swin_blocks = torch.nn.ModuleList()
+        if use_swin and isinstance(config, FoldedACTConfig):
+            if config.sep_swin_for_views:
+                self.view_swin_blocks.extend(self._make_swin() for _ in config.image_features)
+            else:
+                self.pre_fold_swin = self._make_swin()
 
-    def _camera_grid(self, image: Tensor) -> Tensor:
+    def _make_swin(self) -> SwinTransformerBlock:
+        return SwinTransformerBlock(
+            dim=self.config.dim_model,
+            num_heads=self.config.n_heads,
+            window_size=[4, 4],
+            shift_size=[2, 2],
+        )
+
+    def _camera_grid(self, image: Tensor, view_index: int) -> Tensor:
         features = self.backbone(image)["feature_map"]
         projected = self.encoder_img_feat_input_proj(features)
         positions = self.encoder_cam_feat_pos_embed(features).to(projected)
         tokens = projected.flatten(2).permute(2, 0, 1)
         positioned = tokens + positions.flatten(2).permute(2, 0, 1)
         grid = positioned.permute(1, 2, 0).reshape_as(projected)
-        if self.pre_fold_swin is not None:
-            grid = self.pre_fold_swin(grid.movedim(1, -1)).movedim(-1, 1)
+        swin = self.view_swin_blocks[view_index] if self.view_swin_blocks else self.pre_fold_swin
+        if swin is not None:
+            grid = swin(grid.movedim(1, -1)).movedim(-1, 1)
         return grid
 
     def _sample_latent(self, batch, images):
@@ -88,7 +101,7 @@ class FoldedACT(ACT):
     def forward(self, batch):
         if not (
             isinstance(self.config, FoldedACTConfig)
-            and (self.config.spatial_folding or self.pre_fold_swin is not None)
+            and (self.config.spatial_folding or self.pre_fold_swin is not None or self.view_swin_blocks)
             and self.config.image_features
         ):
             return super().forward(batch)
@@ -101,7 +114,7 @@ class FoldedACT(ACT):
         if self.config.env_state_feature:
             prefix.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
-        camera_grids = [self._camera_grid(image) for image in images]
+        camera_grids = [self._camera_grid(image, index) for index, image in enumerate(images)]
         if self.config.camera_overlay:
             camera_grids = [
                 first + second

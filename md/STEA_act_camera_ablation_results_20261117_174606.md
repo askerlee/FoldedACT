@@ -30,6 +30,15 @@
 | **`1cam_top`** | `80` | `0.2599` | `27.89` | `5.52` | `96.27` | `3.36` |
 | **`1cam_left`** | `80` | `0.2639` | `30.41` | `5.29` | `96.47` | `3.18` |
 
+### FoldedACT with Swin: `2cams_top_left` Test Results (`best_val`)
+
+Both runs use `top + left` and are reported separately from the 5,000-step ACT camera ablation above. The previous run is recorded from its console summary; the camera overlay run is recorded from its saved `eval_results.json` (40 visual tokens per step).
+
+| Setting | Best Step | Train Time (`min`) | Chunk Norm L1 $\downarrow$ | TE Pos L2 (`mm`) $\downarrow$ | TE Rot (`deg`) $\downarrow$ | TE Gripper Acc (`%`) $\uparrow$ | TE Gripper F1 (`%`) $\uparrow$ | Grasp Timing MAE (`frames`) $\downarrow$ |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`2cams_top_left` (no overlay)** | `15000` | `39.61` | `0.3089` | `39.31` | `6.44` | `93.81` | `93.63` | `3.82` |
+| **`2cams_top_left` (camera overlay)** | `13000` | `37.66` | `0.3120` | `38.73` | `6.39` | `93.71` | `93.54` | `3.91` |
+
 ---
 
 ## 3. Test-Split TE Position Error (`mm`) Stratified by Scene Clutter (`bag_count = 1..5`)
@@ -46,13 +55,18 @@
 
 ## 4. Test-Split TE Error Stratified by Physical Phase
 
-| Setting | Approach (`>0.70`) Pos L2 (`mm`) | Closing (`0.05..0.70`) Pos L2 (`mm`) | Post-Grasp Lift (`<0.05`) Pos L2 (`mm`) | Closing Gripper Acc (`%`) |
-| :--- | :---: | :---: | :---: | :---: |
-| **`all_4cams`** | `35.06` | `54.26` | `43.79` | `88.17` |
-| **`3cams_active`** | `37.90` | `54.54` | `38.41` | `92.47` |
-| **`2cams_top_left`** | `35.67` | `51.50` | `37.43` | `92.47` |
-| **`1cam_top`** | `37.51` | `54.16` | `38.30` | `94.62` |
-| **`1cam_left`** | `32.78` | `60.03` | `49.73` | `92.47` |
+All rows use the `best_val` checkpoint on the held-out test split. Overall gripper accuracy covers all test steps; closing gripper accuracy covers only closing steps. The FoldedACT rows are separate runs, not part of the 5,000-step ACT camera ablation.
+
+| Run | Approach (`>0.70`) Pos L2 (`mm`) | Closing (`0.05..0.70`) Pos L2 (`mm`) | Lift (`<0.05`) Pos L2 (`mm`) | Closing Gripper Acc (`%`) | Overall Gripper Acc (`%`) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`all_4cams`** | `35.06` | `54.26` | `43.79` | `88.17` | `94.54` |
+| **`3cams_active`** | `37.90` | `54.54` | `38.41` | `92.47` | `93.71` |
+| **`2cams_top_left`** | `35.67` | `51.50` | `37.43` | `92.47` | `93.92` |
+| **`1cam_top`** | `37.51` | `54.16` | `38.30` | `94.62` | `93.61` |
+| **`1cam_left`** | `32.78` | `60.03` | `49.73` | `92.47` | `93.40` |
+| **`folded_act_4cams`** | `45.05` | `54.34` | `37.33` | `92.47` | `94.54` |
+| **`folded_overlay_2cams`** | `37.98` | `51.81` | `36.37` | `94.62` | `93.71` |
+| **`folded_overlay_sepswin_2cams`** | `35.13` | `53.50` | `38.31` | `96.77` | `94.02` |
 
 ---
 

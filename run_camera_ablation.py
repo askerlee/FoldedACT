@@ -202,6 +202,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--spatial-folding", action="store_true", help="Fold diagonal camera feature quadrants")
     parser.add_argument("--camera-overlay", action="store_true", help="Sum post-Swin pairs in two- or four-camera presets")
     parser.add_argument("--swin-after-tokenization", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--sep-swin-for-views",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use an independent Swin block per input camera (default when Swin is enabled)",
+    )
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--lr-backbone", type=float, default=1e-5)
     parser.add_argument("--dof-mode", type=str, default="8d", choices=["8d", "16d"])
@@ -221,6 +227,10 @@ def parse_args() -> argparse.Namespace:
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
         if not args.swin_after_tokenization:
             parser.error("--camera-overlay requires --swin-after-tokenization")
+    if args.sep_swin_for_views and not args.swin_after_tokenization:
+        parser.error("--sep-swin-for-views requires --swin-after-tokenization")
+    if args.sep_swin_for_views is None:
+        args.sep_swin_for_views = args.swin_after_tokenization
     return args
 
 
@@ -296,6 +306,8 @@ def main() -> None:
                 cmd.append("--no-swin-after-tokenization")
             if args.camera_overlay:
                 cmd.append("--camera-overlay")
+            if not args.sep_swin_for_views:
+                cmd.append("--no-sep-swin-for-views")
             proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
             running.append(
                 {
