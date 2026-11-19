@@ -22,6 +22,11 @@ import torch
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 from policy.evaluate_act import BatchNormalizer, evaluate_policy_on_dataset, save_json
@@ -142,6 +147,32 @@ def save_checkpoint_bundle(
     save_json(metadata, ckpt_dir / "checkpoint_meta.json")
 
 
+def init_wandb_run(
+    args: argparse.Namespace,
+    out_dir: Path,
+    run_meta: dict[str, Any],
+) -> Any | None:
+    if not args.wandb or args.wandb_mode == "disabled":
+        return None
+    if wandb is None:
+        raise ImportError(
+            "wandb is required when W&B logging is enabled. Install wandb or pass --no-wandb."
+        )
+    init_kwargs: dict[str, Any] = {
+        "project": args.wandb_project,
+        "name": args.wandb_run_name or out_dir.name,
+        "dir": str(out_dir),
+        "config": run_meta,
+    }
+    if args.wandb_entity:
+        init_kwargs["entity"] = args.wandb_entity
+    if args.wandb_group:
+        init_kwargs["group"] = args.wandb_group
+    if args.wandb_mode:
+        init_kwargs["mode"] = args.wandb_mode
+    return wandb.init(**init_kwargs)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train ACT with configurable camera views on STEA_pick_success")
     parser.add_argument(
@@ -197,6 +228,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--no-amp", action="store_true", help="Disable bf16 mixed precision")
+    parser.add_argument(
+        "--wandb",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Log training losses, validation losses, and best-checkpoint test losses to W&B",
+    )
+    parser.add_argument("--wandb-project", type=str, default="stea-act")
+    parser.add_argument("--wandb-entity", type=str, default="")
+    parser.add_argument("--wandb-run-name", type=str, default="")
+    parser.add_argument("--wandb-group", type=str, default="")
+    parser.add_argument(
+        "--wandb-mode",
+        type=str,
+        default=None,
+        choices=["online", "offline", "disabled"],
+    )
     args = parser.parse_args()
     if args.camera_overlay:
         if len(CAMERA_PRESETS[args.camera_preset]) not in (2, 4):
@@ -352,6 +399,7 @@ def main() -> None:
         "started_at": ts,
     }
     save_json(run_meta, out_dir / "run_config.json")
+    wandb_run = init_wandb_run(args, out_dir, run_meta)
 
     history_path = out_dir / "train_history.jsonl"
     best_val_score = float("inf")
@@ -363,157 +411,219 @@ def main() -> None:
     running_kld = 0.0
     running_count = 0
 
-    policy.train()
-    for step in range(1, args.steps + 1):
-        raw_batch = next(train_iter)
-        norm_batch = normalizer.normalize_batch(raw_batch, include_action=True)
+    try:
+        policy.train()
+        for step in range(1, args.steps + 1):
+            raw_batch = next(train_iter)
+            norm_batch = normalizer.normalize_batch(raw_batch, include_action=True)
 
-        optimizer.zero_grad(set_to_none=True)
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
-            loss, loss_dict = policy.forward(norm_batch)
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+                loss, loss_dict = policy.forward(norm_batch)
 
-        loss.backward()
-        grad_norm = clip_grad_norm_(policy.parameters(), args.grad_clip_norm)
-        optimizer.step()
-        scheduler.step()
+            loss.backward()
+            grad_norm = clip_grad_norm_(policy.parameters(), args.grad_clip_norm)
+            optimizer.step()
+            scheduler.step()
 
-        running_loss += float(loss.item())
-        running_l1 += float(loss_dict["l1_loss"])
-        running_kld += float(loss_dict.get("kld_loss", 0.0))
-        running_count += 1
+            running_loss += float(loss.item())
+            running_l1 += float(loss_dict["l1_loss"])
+            running_kld += float(loss_dict.get("kld_loss", 0.0))
+            running_count += 1
 
-        if step % args.log_freq == 0 or step == 1:
-            elapsed = time.time() - t_start
-            steps_per_s = step / max(elapsed, 1e-6)
-            avg_loss = running_loss / running_count
-            avg_l1 = running_l1 / running_count
-            avg_kld = running_kld / running_count
-            cur_lr = optimizer.param_groups[0]["lr"]
-            log_rec = {
-                "type": "train",
-                "step": step,
-                "loss": round(avg_loss, 5),
-                "l1_loss": round(avg_l1, 5),
-                "kld_loss": round(avg_kld, 5),
-                "grad_norm": round(float(grad_norm), 4),
-                "lr": cur_lr,
-                "steps_per_sec": round(steps_per_s, 2),
-                "elapsed_sec": round(elapsed, 1),
-            }
-            with open(history_path, "a", encoding="utf-8") as hf:
-                hf.write(json.dumps(log_rec) + "\n")
-            print(
-                f"[{args.camera_preset} | step {step:5d}/{args.steps}] "
-                f"loss={avg_loss:.4f} (l1={avg_l1:.4f}, kld={avg_kld:.4f}) "
-                f"lr={cur_lr:.2e} speed={steps_per_s:.1f} it/s",
-                flush=True,
-            )
-            running_loss = 0.0
-            running_l1 = 0.0
-            running_kld = 0.0
-            running_count = 0
-
-        if step % args.eval_freq == 0 or step == args.steps:
-            val_res = evaluate_policy_on_dataset(
-                policy,
-                val_ds,
-                normalizer,
-                batch_size=args.batch_size,
-                num_workers=min(args.num_workers, 2),
-                record_attention=False,
-            )
-            val_score = val_res["chunk_horizon_metrics"]["norm_l1_active8d"]
-            te_m = val_res["temporal_ensemble_metrics"]
-            val_rec = {
-                "type": "val",
-                "step": step,
-                "val_norm_l1": round(val_score, 5),
-                "val_te_pos_l2_mm": round(te_m["pos_l2_mm"], 3),
-                "val_te_rot_deg": round(te_m["rot_geodesic_deg"], 3),
-                "val_te_gripper_acc_pct": round(te_m["gripper_acc_pct"], 2),
-                "val_grasp_mae_frames": round(te_m["grasp_timing_mae_frames"], 2),
-            }
-            with open(history_path, "a", encoding="utf-8") as hf:
-                hf.write(json.dumps(val_rec) + "\n")
-
-            is_best = val_score < best_val_score
-            if is_best:
-                best_val_score = val_score
-                best_val_step = step
-                save_checkpoint_bundle(
-                    out_dir / "checkpoints" / "best_val",
-                    policy,
-                    stats,
-                    {"step": step, "val_norm_l1": val_score, **val_rec},
+            if step % args.log_freq == 0 or step == 1:
+                elapsed = time.time() - t_start
+                steps_per_s = step / max(elapsed, 1e-6)
+                avg_loss = running_loss / running_count
+                avg_l1 = running_l1 / running_count
+                avg_kld = running_kld / running_count
+                cur_lr = optimizer.param_groups[0]["lr"]
+                log_rec = {
+                    "type": "train",
+                    "step": step,
+                    "loss": round(avg_loss, 5),
+                    "l1_loss": round(avg_l1, 5),
+                    "kld_loss": round(avg_kld, 5),
+                    "grad_norm": round(float(grad_norm), 4),
+                    "lr": cur_lr,
+                    "steps_per_sec": round(steps_per_s, 2),
+                    "elapsed_sec": round(elapsed, 1),
+                }
+                with open(history_path, "a", encoding="utf-8") as hf:
+                    hf.write(json.dumps(log_rec) + "\n")
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "train/loss": avg_loss,
+                            "train/l1_loss": avg_l1,
+                            "train/kld_loss": avg_kld,
+                            "train/grad_norm": float(grad_norm),
+                            "train/lr": cur_lr,
+                            "train/steps_per_sec": steps_per_s,
+                        },
+                        step=step,
+                    )
+                print(
+                    f"[{args.camera_preset} | step {step:5d}/{args.steps}] "
+                    f"loss={avg_loss:.4f} (l1={avg_l1:.4f}, kld={avg_kld:.4f}) "
+                    f"lr={cur_lr:.2e} speed={steps_per_s:.1f} it/s",
+                    flush=True,
                 )
+                running_loss = 0.0
+                running_l1 = 0.0
+                running_kld = 0.0
+                running_count = 0
 
-            tag = " *BEST*" if is_best else ""
-            print(
-                f"  -> [VAL @ step {step:5d}] norm_l1={val_score:.4f} | "
-                f"TE pos_l2={te_m['pos_l2_mm']:.2f}mm, rot={te_m['rot_geodesic_deg']:.2f}deg, "
-                f"grip_acc={te_m['gripper_acc_pct']:.1f}%, grasp_mae={te_m['grasp_timing_mae_frames']:.1f}f{tag}",
-                flush=True,
+            if step % args.eval_freq == 0 or step == args.steps:
+                val_res = evaluate_policy_on_dataset(
+                    policy,
+                    val_ds,
+                    normalizer,
+                    batch_size=args.batch_size,
+                    num_workers=min(args.num_workers, 2),
+                    record_attention=False,
+                )
+                val_chunk_m = val_res["chunk_horizon_metrics"]
+                val_score = val_chunk_m["norm_l1_active8d"]
+                te_m = val_res["temporal_ensemble_metrics"]
+                val_rec = {
+                    "type": "val",
+                    "step": step,
+                    "val_norm_l1": round(val_score, 5),
+                    "val_te_pos_l2_mm": round(te_m["pos_l2_mm"], 3),
+                    "val_te_rot_deg": round(te_m["rot_geodesic_deg"], 3),
+                    "val_te_gripper_acc_pct": round(te_m["gripper_acc_pct"], 2),
+                    "val_grasp_mae_frames": round(te_m["grasp_timing_mae_frames"], 2),
+                }
+                with open(history_path, "a", encoding="utf-8") as hf:
+                    hf.write(json.dumps(val_rec) + "\n")
+
+                is_best = val_score < best_val_score
+                if is_best:
+                    best_val_score = val_score
+                    best_val_step = step
+                    save_checkpoint_bundle(
+                        out_dir / "checkpoints" / "best_val",
+                        policy,
+                        stats,
+                        {"step": step, "val_norm_l1": val_score, **val_rec},
+                    )
+
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "val/norm_l1": val_score,
+                            "val/best_norm_l1": best_val_score,
+                            "val/chunk_pos_l1_mm": val_chunk_m["pos_l1_mm"],
+                            "val/chunk_pos_l2_mm": val_chunk_m["pos_l2_mm"],
+                            "val/chunk_rot_l1": val_chunk_m["rot_l1"],
+                            "val/chunk_rot_deg": val_chunk_m["rot_geodesic_deg"],
+                            "val/chunk_gripper_l1": val_chunk_m["gripper_l1"],
+                            "val/te_pos_l2_mm": te_m["pos_l2_mm"],
+                            "val/te_rot_deg": te_m["rot_geodesic_deg"],
+                            "val/te_gripper_acc_pct": te_m["gripper_acc_pct"],
+                            "val/te_gripper_f1_pct": te_m["gripper_f1_pct"],
+                            "val/grasp_mae_frames": te_m["grasp_timing_mae_frames"],
+                        },
+                        step=step,
+                    )
+
+                tag = " *BEST*" if is_best else ""
+                print(
+                    f"  -> [VAL @ step {step:5d}] norm_l1={val_score:.4f} | "
+                    f"TE pos_l2={te_m['pos_l2_mm']:.2f}mm, rot={te_m['rot_geodesic_deg']:.2f}deg, "
+                    f"grip_acc={te_m['gripper_acc_pct']:.1f}%, grasp_mae={te_m['grasp_timing_mae_frames']:.1f}f{tag}",
+                    flush=True,
+                )
+                policy.train()
+
+        total_train_sec = time.time() - t_start
+        save_checkpoint_bundle(
+            out_dir / "checkpoints" / "last",
+            policy,
+            stats,
+            {"step": args.steps, "total_train_sec": total_train_sec},
+        )
+
+        # Evaluate LAST checkpoint on val & test with cross-attention attribution
+        print(f"[{args.camera_preset}] Evaluating final ('last' @ step {args.steps}) checkpoint on Val & Test ...")
+        last_val_eval = evaluate_policy_on_dataset(
+            policy, val_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
+        )
+        last_test_eval = evaluate_policy_on_dataset(
+            policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
+        )
+
+        # Reload BEST_VAL checkpoint and evaluate on val & test with cross-attention attribution
+        best_ckpt_dir = out_dir / "checkpoints" / "best_val"
+        print(f"[{args.camera_preset}] Evaluating best_val (@ step {best_val_step}) checkpoint on Val & Test ...")
+        best_policy = FoldedACTPolicy.from_pretrained(str(best_ckpt_dir)).to(device)
+        best_val_eval = evaluate_policy_on_dataset(
+            best_policy, val_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
+        )
+        best_test_eval = evaluate_policy_on_dataset(
+            best_policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
+        )
+
+        final_summary = {
+            "run_config": {
+                **run_meta,
+                "total_train_sec": round(total_train_sec, 2),
+                "best_val_step": best_val_step,
+                "best_val_norm_l1": best_val_score,
+            },
+            "best_val_checkpoint": {
+                "step": best_val_step,
+                "val": best_val_eval,
+                "test": best_test_eval,
+            },
+            "last_checkpoint": {
+                "step": args.steps,
+                "val": last_val_eval,
+                "test": last_test_eval,
+            },
+        }
+        save_json(final_summary, out_dir / "eval_results.json")
+
+        bt = best_test_eval["temporal_ensemble_metrics"]
+        bc = best_test_eval["chunk_horizon_metrics"]
+        if wandb_run is not None:
+            best_test_metrics = {
+                "test_best/norm_l1": bc["norm_l1_active8d"],
+                "test_best/chunk_pos_l1_mm": bc["pos_l1_mm"],
+                "test_best/chunk_pos_l2_mm": bc["pos_l2_mm"],
+                "test_best/chunk_rot_l1": bc["rot_l1"],
+                "test_best/chunk_rot_deg": bc["rot_geodesic_deg"],
+                "test_best/chunk_gripper_l1": bc["gripper_l1"],
+                "test_best/chunk_gripper_acc_pct": bc["gripper_acc_pct"],
+                "test_best/chunk_gripper_f1_pct": bc["gripper_f1_pct"],
+                "test_best/te_pos_l2_mm": bt["pos_l2_mm"],
+                "test_best/te_rot_deg": bt["rot_geodesic_deg"],
+                "test_best/te_gripper_acc_pct": bt["gripper_acc_pct"],
+                "test_best/te_gripper_f1_pct": bt["gripper_f1_pct"],
+                "test_best/grasp_mae_frames": bt["grasp_timing_mae_frames"],
+            }
+            wandb_run.log(best_test_metrics, step=args.steps)
+            wandb_run.summary.update(
+                {
+                    "best_val_step": best_val_step,
+                    "best_val_norm_l1": best_val_score,
+                    "total_train_sec": round(total_train_sec, 2),
+                    **best_test_metrics,
+                }
             )
-            policy.train()
 
-    total_train_sec = time.time() - t_start
-    save_checkpoint_bundle(
-        out_dir / "checkpoints" / "last",
-        policy,
-        stats,
-        {"step": args.steps, "total_train_sec": total_train_sec},
-    )
-
-    # Evaluate LAST checkpoint on val & test with cross-attention attribution
-    print(f"[{args.camera_preset}] Evaluating final ('last' @ step {args.steps}) checkpoint on Val & Test ...")
-    last_val_eval = evaluate_policy_on_dataset(
-        policy, val_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
-    )
-    last_test_eval = evaluate_policy_on_dataset(
-        policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
-    )
-
-    # Reload BEST_VAL checkpoint and evaluate on val & test with cross-attention attribution
-    best_ckpt_dir = out_dir / "checkpoints" / "best_val"
-    print(f"[{args.camera_preset}] Evaluating best_val (@ step {best_val_step}) checkpoint on Val & Test ...")
-    best_policy = FoldedACTPolicy.from_pretrained(str(best_ckpt_dir)).to(device)
-    best_val_eval = evaluate_policy_on_dataset(
-        best_policy, val_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
-    )
-    best_test_eval = evaluate_policy_on_dataset(
-        best_policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
-    )
-
-    final_summary = {
-        "run_config": {
-            **run_meta,
-            "total_train_sec": round(total_train_sec, 2),
-            "best_val_step": best_val_step,
-            "best_val_norm_l1": best_val_score,
-        },
-        "best_val_checkpoint": {
-            "step": best_val_step,
-            "val": best_val_eval,
-            "test": best_test_eval,
-        },
-        "last_checkpoint": {
-            "step": args.steps,
-            "val": last_val_eval,
-            "test": last_test_eval,
-        },
-    }
-    save_json(final_summary, out_dir / "eval_results.json")
-
-    bt = best_test_eval["temporal_ensemble_metrics"]
-    bc = best_test_eval["chunk_horizon_metrics"]
-    print(
-        f"=== DONE {args.camera_preset} in {total_train_sec / 60.0:.2f} min (best_step={best_val_step}) ===\n"
-        f"  [TEST best_val] norm_l1={bc['norm_l1_active8d']:.4f} | "
-        f"TE pos_l2={bt['pos_l2_mm']:.2f} mm | TE rot={bt['rot_geodesic_deg']:.2f} deg | "
-        f"TE grip_acc={bt['gripper_acc_pct']:.2f}% (F1={bt['gripper_f1_pct']:.2f}%) | "
-        f"grasp_mae={bt['grasp_timing_mae_frames']:.2f} frames",
-        flush=True,
-    )
+        print(
+            f"=== DONE {args.camera_preset} in {total_train_sec / 60.0:.2f} min (best_step={best_val_step}) ===\n"
+            f"  [TEST best_val] norm_l1={bc['norm_l1_active8d']:.4f} | "
+            f"TE pos_l2={bt['pos_l2_mm']:.2f} mm | TE rot={bt['rot_geodesic_deg']:.2f} deg | "
+            f"TE grip_acc={bt['gripper_acc_pct']:.2f}% (F1={bt['gripper_f1_pct']:.2f}%) | "
+            f"grasp_mae={bt['grasp_timing_mae_frames']:.2f} frames",
+            flush=True,
+        )
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == "__main__":

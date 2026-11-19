@@ -222,6 +222,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", type=str, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--suite-dir", type=str, default="")
     parser.add_argument("--write-policy-md", action="store_true", help="Also write timestamped MD under policy/")
+    parser.add_argument(
+        "--wandb",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Log training, validation, and best-checkpoint test losses to W&B",
+    )
+    parser.add_argument("--wandb-project", type=str, default="stea-act")
+    parser.add_argument("--wandb-entity", type=str, default="")
+    parser.add_argument("--wandb-group", type=str, default="")
+    parser.add_argument(
+        "--wandb-mode",
+        type=str,
+        default=None,
+        choices=["online", "offline", "disabled"],
+    )
     args = parser.parse_args()
     overlay_presets = [preset for preset in DEFAULT_PRESET_ORDER if len(CAMERA_PRESETS[preset]) in (2, 4)]
     if args.presets is None:
@@ -310,6 +325,14 @@ def main() -> None:
                 cmd.append("--camera-overlay")
             if not args.sep_swin_for_views:
                 cmd.append("--no-sep-swin-for-views")
+            cmd.append("--wandb" if args.wandb else "--no-wandb")
+            cmd.extend(["--wandb-project", args.wandb_project])
+            if args.wandb_entity:
+                cmd.extend(["--wandb-entity", args.wandb_entity])
+            cmd.extend(["--wandb-group", args.wandb_group or suite_dir.name])
+            cmd.extend(["--wandb-run-name", f"{suite_dir.name}_{preset}"])
+            if args.wandb_mode:
+                cmd.extend(["--wandb-mode", args.wandb_mode])
             proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
             running.append(
                 {
