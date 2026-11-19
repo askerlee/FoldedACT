@@ -208,8 +208,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--early-camera-overlay",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="When --camera-overlay is set, channel-stack camera pairs into a widened 6-ch ResNet18 conv1 (use --no-early-camera-overlay for post-Swin token sum)",
+        default=False,
+        help="With --camera-overlay, use experimental 6-channel input fusion instead of the default post-Swin sum",
     )
     parser.add_argument("--swin-after-tokenization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
@@ -342,10 +342,10 @@ def main() -> None:
             cmd.append("--spatial-folding" if args.spatial_folding else "--no-spatial-folding")
             if not args.swin_after_tokenization:
                 cmd.append("--no-swin-after-tokenization")
-            if args.cameearly_camera_overlay:
-                cmd.append("--no-early-camera-overlay")
-            if not args.ra_overlay:
+            if args.camera_overlay:
                 cmd.append("--camera-overlay")
+            if args.early_camera_overlay:
+                cmd.append("--early-camera-overlay")
             if not args.sep_swin_for_views:
                 cmd.append("--no-sep-swin-for-views")
             cmd.append("--compile" if args.compile else "--no-compile")

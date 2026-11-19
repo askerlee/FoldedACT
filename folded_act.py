@@ -19,7 +19,7 @@ class FoldedACTConfig(ACTConfig):
     swin_after_tokenization: bool = True
     swin_before_folding: bool = False
     camera_overlay: bool = False
-    early_camera_overlay: bool = True
+    early_camera_overlay: bool = False
     sep_swin_for_views: bool = False
 
 
@@ -58,6 +58,9 @@ class FoldedACT(ACT):
         )
         if use_early_overlay:
             self._widen_backbone_conv1(num_stacked_views=2)
+        if config.image_features:
+            self.backbone.to(memory_format=torch.channels_last)
+            self.encoder_img_feat_input_proj.to(memory_format=torch.channels_last)
         self.pre_fold_swin = None
         self.view_swin_blocks = torch.nn.ModuleList()
         if use_swin and isinstance(config, FoldedACTConfig):
@@ -99,13 +102,13 @@ class FoldedACT(ACT):
             shift_size=[2, 2],
         )
 
-    def _camera_grid(self, image: Tensor, view_index: int) -> Tensor:
-        features = self.backbone(image)["feature_map"]
+    def _project_camera_grid(self, images: Tensor) -> Tensor:
+        features = self.backbone(images.contiguous(memory_format=torch.channels_last))["feature_map"]
         projected = self.encoder_img_feat_input_proj(features)
         positions = self.encoder_cam_feat_pos_embed(features).to(projected)
-        tokens = projected.flatten(2).permute(2, 0, 1)
-        positioned = tokens + positions.flatten(2).permute(2, 0, 1)
-        grid = positioned.permute(1, 2, 0).reshape_as(projected)
+        return projected + positions
+
+    def _camera_grid(self, grid: Tensor, view_index: int) -> Tensor:
         swin = self.view_swin_blocks[view_index] if self.view_swin_blocks else self.pre_fold_swin
         if swin is not None:
             grid = swin(grid.movedim(1, -1)).movedim(-1, 1)
@@ -143,6 +146,9 @@ class FoldedACT(ACT):
             )
             and self.config.image_features
         ):
+            if self.config.image_features:
+                images = [image.contiguous(memory_format=torch.channels_last) for image in batch[OBS_IMAGES]]
+                batch = {**batch, OBS_IMAGES: images}
             return super().forward(batch)
 
         images = batch[OBS_IMAGES]
@@ -159,8 +165,14 @@ class FoldedACT(ACT):
                 for first, second in zip(images[::2], images[1::2], strict=True)
             ]
         else:
-            camera_inputs = images
-        camera_grids = [self._camera_grid(image, index) for index, image in enumerate(camera_inputs)]
+            camera_inputs = list(images)
+        if len(camera_inputs) > 1 and all(image.shape == camera_inputs[0].shape for image in camera_inputs):
+            projected_grids = self._project_camera_grid(torch.cat(camera_inputs, dim=0)).chunk(
+                len(camera_inputs), dim=0
+            )
+        else:
+            projected_grids = [self._project_camera_grid(image) for image in camera_inputs]
+        camera_grids = [self._camera_grid(grid, index) for index, grid in enumerate(projected_grids)]
         if self.config.camera_overlay and not self.config.early_camera_overlay:
             camera_grids = [
                 first + second

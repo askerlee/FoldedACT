@@ -70,7 +70,7 @@ def build_act_config(
     spatial_folding: bool = True,
     swin_after_tokenization: bool = True,
     camera_overlay: bool = False,
-    early_camera_overlay: bool = True,
+    early_camera_overlay: bool = False,
     sep_swin_for_views: bool | None = None,
 ) -> FoldedACTConfig:
     input_features: dict[str, PolicyFeature] = {
@@ -229,8 +229,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--early-camera-overlay",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="When --camera-overlay is set, channel-stack camera pairs into a widened 6-ch ResNet18 conv1 (use --no-early-camera-overlay for post-Swin token sum)",
+        default=False,
+        help="With --camera-overlay, use experimental 6-channel input fusion instead of the default post-Swin sum",
     )
     parser.add_argument(
         "--sep-swin-for-views",
