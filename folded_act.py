@@ -19,6 +19,7 @@ class FoldedACTConfig(ACTConfig):
     swin_after_tokenization: bool = True
     swin_before_folding: bool = False
     camera_overlay: bool = False
+    early_camera_overlay: bool = True
     sep_swin_for_views: bool = False
 
 
@@ -44,16 +45,24 @@ class FoldedACT(ACT):
             if config.camera_overlay:
                 if len(config.image_features) not in (2, 4):
                     raise ValueError("Camera overlay requires two or four input cameras.")
+                if not config.early_camera_overlay and not use_swin:
+                    raise ValueError("Late camera overlay requires Swin.")
             if config.sep_swin_for_views and not use_swin:
                 raise ValueError("Separate Swin blocks require Swin and at least one input camera.")
         super().__init__(config)
-        if isinstance(config, FoldedACTConfig) and config.camera_overlay and config.image_features:
+        use_early_overlay = (
+            isinstance(config, FoldedACTConfig)
+            and config.camera_overlay
+            and config.early_camera_overlay
+            and bool(config.image_features)
+        )
+        if use_early_overlay:
             self._widen_backbone_conv1(num_stacked_views=2)
         self.pre_fold_swin = None
         self.view_swin_blocks = torch.nn.ModuleList()
         if use_swin and isinstance(config, FoldedACTConfig):
             num_visual_streams = (
-                len(config.image_features) // 2 if config.camera_overlay else len(config.image_features)
+                len(config.image_features) // 2 if use_early_overlay else len(config.image_features)
             )
             if config.sep_swin_for_views:
                 self.view_swin_blocks.extend(self._make_swin() for _ in range(num_visual_streams))
@@ -144,7 +153,7 @@ class FoldedACT(ACT):
         if self.config.env_state_feature:
             prefix.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
 
-        if self.config.camera_overlay:
+        if self.config.camera_overlay and self.config.early_camera_overlay:
             camera_inputs = [
                 torch.cat((first, second), dim=1)
                 for first, second in zip(images[::2], images[1::2], strict=True)
@@ -152,6 +161,11 @@ class FoldedACT(ACT):
         else:
             camera_inputs = images
         camera_grids = [self._camera_grid(image, index) for index, image in enumerate(camera_inputs)]
+        if self.config.camera_overlay and not self.config.early_camera_overlay:
+            camera_grids = [
+                first + second
+                for first, second in zip(camera_grids[::2], camera_grids[1::2], strict=True)
+            ]
         if self.config.spatial_folding:
             camera_grids = [fold_camera_features(grid) for grid in camera_grids]
         camera_tokens = torch.cat([grid.flatten(2).permute(2, 0, 1) for grid in camera_grids], dim=0)

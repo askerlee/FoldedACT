@@ -203,7 +203,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--camera-overlay",
         action="store_true",
-        help="Channel-stack camera pairs into 6-channel ResNet18 conv1 in two- or four-camera presets",
+        help="Fuse camera pairs in two- or four-camera presets (6-ch conv1 with --early-camera-overlay, or post-Swin sum with --no-early-camera-overlay)",
+    )
+    parser.add_argument(
+        "--early-camera-overlay",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When --camera-overlay is set, channel-stack camera pairs into a widened 6-ch ResNet18 conv1 (use --no-early-camera-overlay for post-Swin token sum)",
     )
     parser.add_argument("--swin-after-tokenization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
@@ -244,6 +250,8 @@ def parse_args() -> argparse.Namespace:
     if args.camera_overlay:
         if any(preset not in overlay_presets for preset in args.presets):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
+        if not args.early_camera_overlay and not args.swin_after_tokenization:
+            parser.error("--camera-overlay with --no-early-camera-overlay requires --swin-after-tokenization")
     if args.sep_swin_for_views and not args.swin_after_tokenization:
         parser.error("--sep-swin-for-views requires --swin-after-tokenization")
     if args.sep_swin_for_views is None:
@@ -321,7 +329,9 @@ def main() -> None:
             cmd.append("--spatial-folding" if args.spatial_folding else "--no-spatial-folding")
             if not args.swin_after_tokenization:
                 cmd.append("--no-swin-after-tokenization")
-            if args.camera_overlay:
+            if args.cameearly_camera_overlay:
+                cmd.append("--no-early-camera-overlay")
+            if not args.ra_overlay:
                 cmd.append("--camera-overlay")
             if not args.sep_swin_for_views:
                 cmd.append("--no-sep-swin-for-views")

@@ -69,6 +69,7 @@ def build_act_config(
     spatial_folding: bool = True,
     swin_after_tokenization: bool = True,
     camera_overlay: bool = False,
+    early_camera_overlay: bool = True,
     sep_swin_for_views: bool | None = None,
 ) -> FoldedACTConfig:
     input_features: dict[str, PolicyFeature] = {
@@ -86,6 +87,7 @@ def build_act_config(
         spatial_folding=spatial_folding,
         swin_after_tokenization=swin_after_tokenization,
         camera_overlay=camera_overlay,
+        early_camera_overlay=early_camera_overlay,
         sep_swin_for_views=swin_after_tokenization if sep_swin_for_views is None else sep_swin_for_views,
         n_obs_steps=1,
         chunk_size=chunk_size,
@@ -205,7 +207,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--camera-overlay",
         action="store_true",
-        help="Channel-stack adjacent camera pairs into 6-channel ResNet18 conv1 (2cams_top_left or all_4cams)",
+        help="Fuse adjacent camera pairs (2cams_top_left or all_4cams); uses 6-ch conv1 when --early-camera-overlay is enabled, or sums post-Swin tokens otherwise",
+    )
+    parser.add_argument(
+        "--early-camera-overlay",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When --camera-overlay is set, channel-stack camera pairs into a widened 6-ch ResNet18 conv1 (use --no-early-camera-overlay for post-Swin token sum)",
     )
     parser.add_argument(
         "--sep-swin-for-views",
@@ -248,6 +256,8 @@ def parse_args() -> argparse.Namespace:
     if args.camera_overlay:
         if len(CAMERA_PRESETS[args.camera_preset]) not in (2, 4):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
+        if not args.early_camera_overlay and not args.swin_after_tokenization:
+            parser.error("--camera-overlay with --no-early-camera-overlay requires --swin-after-tokenization")
     if args.sep_swin_for_views and not args.swin_after_tokenization:
         parser.error("--sep-swin-for-views requires --swin-after-tokenization")
     if args.sep_swin_for_views is None:
@@ -327,6 +337,7 @@ def main() -> None:
         spatial_folding=args.spatial_folding,
         swin_after_tokenization=args.swin_after_tokenization,
         camera_overlay=args.camera_overlay,
+        early_camera_overlay=args.early_camera_overlay,
         sep_swin_for_views=args.sep_swin_for_views,
     )
 
@@ -374,6 +385,7 @@ def main() -> None:
         "spatial_folding": act_cfg.spatial_folding,
         "swin_after_tokenization": act_cfg.swin_after_tokenization,
         "camera_overlay": act_cfg.camera_overlay,
+        "early_camera_overlay": act_cfg.early_camera_overlay,
         "sep_swin_for_views": act_cfg.sep_swin_for_views,
         "visual_tokens_per_step": visual_tokens,
         "dof_mode": args.dof_mode,
