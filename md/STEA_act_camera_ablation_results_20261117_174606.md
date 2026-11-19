@@ -67,7 +67,9 @@ All rows use the `best_val` checkpoint on the held-out test split. Overall gripp
 | **`folded_act_4cams`** | `45.05` | `54.34` | `26.33` | `37.33` | `92.47` | `94.54` |
 | **`folded_overlay_2cams`** | `37.98` | `51.81` | `25.40` | `36.37` | `94.62` | `93.71` |
 | **`folded_overlay_sepswin_2cams`** | `35.13` | `53.50` | `26.40` | `38.31` | `96.77` | `94.02` |
+| **`folded_overlay_sepswin_2cams_run2`** | `34.92` | `51.85` | `25.38` | `36.61` | `94.62` | `93.92` |
 | **`folded_overlay_sepswin_4cams`** | `41.65` | `51.98` | `26.01` | `34.82` | `95.70` | `94.33` |
+| **`folded_overlay_sepswin_4cams run2`** | `41.78` | `49.52` | `24.95` | `34.95` | `96.77` | `94.23` |
 | **`folded_overlayresnet_sepswin_2cams`** | `34.81` | `54.72` | `26.95` | `37.53` | `95.70` | `93.81` |
 | **`folded_overlayresnet_sepswin_4cams`** | `42.40` | `57.36` | `28.04` | `38.34` | `94.62` | `93.81` |
 

@@ -228,6 +228,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", type=str, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--suite-dir", type=str, default="")
     parser.add_argument("--write-policy-md", action="store_true", help="Also write timestamped MD under policy/")
+    precision = parser.add_mutually_exclusive_group()
+    precision.add_argument(
+        "--precision", choices=["bf16", "fp16", "no-amp"],
+        help="Training precision for all workers (defaults to FP16 on CUDA, otherwise no AMP)",
+    )
+    precision.add_argument(
+        "--no-amp", dest="precision", action="store_const", const="no-amp",
+        help="Alias for --precision no-amp",
+    )
     parser.add_argument(
         "--compile",
         action=argparse.BooleanOptionalAction,
@@ -348,6 +357,8 @@ def main() -> None:
                 cmd.append("--early-camera-overlay")
             if not args.sep_swin_for_views:
                 cmd.append("--no-sep-swin-for-views")
+            if args.precision is not None:
+                cmd.extend(["--precision", args.precision])
             cmd.append("--compile" if args.compile else "--no-compile")
             cmd.extend(["--compile-mode", args.compile_mode])
             cmd.append("--wandb" if args.wandb else "--no-wandb")

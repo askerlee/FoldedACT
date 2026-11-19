@@ -138,6 +138,22 @@ def infinite_dataloader(loader: DataLoader):
             yield batch
 
 
+def resolve_precision(requested: str | None, device: torch.device) -> str:
+    if requested == "no-amp":
+        return requested
+    if device.type != "cuda":
+        if requested is not None:
+            raise SystemExit(f"--precision {requested} requires CUDA")
+        return "no-amp"
+    if requested is None or requested == "fp16":
+        return "fp16"
+    with torch.cuda.device(device):
+        supports_bf16 = torch.cuda.is_bf16_supported(including_emulation=False)
+    if not supports_bf16:
+        raise SystemExit(f"--precision bf16 requires native BF16 support on {device}")
+    return "bf16"
+
+
 @contextmanager
 def unwrapped_policy_model(policy: FoldedACTPolicy, raw_model: FoldedACT):
     current_model = policy.model
@@ -252,7 +268,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda:0")
-    parser.add_argument("--no-amp", action="store_true", help="Disable bf16 mixed precision")
+    precision = parser.add_mutually_exclusive_group()
+    precision.add_argument(
+        "--precision", choices=["bf16", "fp16", "no-amp"],
+        help="Training precision (defaults to FP16 on CUDA, otherwise no AMP)",
+    )
+    precision.add_argument(
+        "--no-amp", dest="precision", action="store_const", const="no-amp",
+        help="Alias for --precision no-amp",
+    )
     parser.add_argument(
         "--compile",
         action=argparse.BooleanOptionalAction,
@@ -304,9 +328,13 @@ def main() -> None:
     torch.set_float32_matmul_precision("high")
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    precision = resolve_precision(args.precision, device)
+    amp_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16}.get(precision)
+    scaler = torch.amp.GradScaler("cuda") if precision == "fp16" else None
     camera_keys = CAMERA_PRESETS[args.camera_preset]
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.now()
+    ts = now.strftime("%Y%m%d_%H%M%S")
     out_dir = (
         Path(args.output_dir)
         if args.output_dir
@@ -314,11 +342,37 @@ def main() -> None:
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    wandb_status = (
+        "disabled"
+        if not args.wandb or args.wandb_mode == "disabled"
+        else f"enabled (project={args.wandb_project}, mode={args.wandb_mode or 'online'})"
+    )
     print(f"=== STEA ACT Camera-View Training: {args.camera_preset} ===")
+    print(f"  Started At   : {now.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  Device       : {device}")
+    print(f"  Precision    : {precision}")
     print(f"  Cameras ({len(camera_keys)})  : {list(camera_keys)}")
-    print(f"  DoF / Gripper: {args.dof_mode} / {args.gripper_mode} (shift={args.gripper_shift}, thr={args.gripper_open_threshold})")
-    print(f"  Chunk / Batch: chunk_size={args.chunk_size}, batch_size={args.batch_size}, steps={args.steps}")
+    print(
+        f"  Model Config : spatial_folding={args.spatial_folding}, "
+        f"swin={args.swin_after_tokenization}, "
+        f"sep_swin={args.sep_swin_for_views}, "
+        f"camera_overlay={args.camera_overlay}, "
+        f"early_overlay={args.early_camera_overlay}"
+    )
+    print(
+        f"  DoF / Gripper: {args.dof_mode} / {args.gripper_mode} "
+        f"(shift={args.gripper_shift}, thr={args.gripper_open_threshold}, image_norm={args.image_norm})"
+    )
+    print(
+        f"  Chunk / Batch: chunk_size={args.chunk_size}, batch_size={args.batch_size}, "
+        f"steps={args.steps}, warmup={args.warmup_steps}, eval_freq={args.eval_freq}"
+    )
+    print(
+        f"  Optimizer    : lr={args.lr}, lr_backbone={args.lr_backbone}, "
+        f"weight_decay={args.weight_decay}, kl_weight={args.kl_weight}, "
+        f"grad_clip={args.grad_clip_norm}, seed={args.seed}"
+    )
+    print(f"  W&B          : {wandb_status}")
     print(f"  Output Dir   : {out_dir}")
 
     trajectories = load_reconstructed_trajectories(
@@ -406,7 +460,6 @@ def main() -> None:
     )
     train_iter = infinite_dataloader(train_loader)
 
-    use_amp = (not args.no_amp) and device.type == "cuda" and torch.cuda.is_bf16_supported()
     visual_tokens = 0
     stride = 16 if act_cfg.replace_final_stride_with_dilation else 32
     for camera_key in camera_keys[::2] if act_cfg.camera_overlay else camera_keys:
@@ -417,6 +470,7 @@ def main() -> None:
             visual_tokens += 2 * ((feature_rows + 1) // 2) * ((feature_cols + 1) // 2)
         else:
             visual_tokens += feature_rows * feature_cols
+    print(f"  Visual Tokens: {visual_tokens}/step")
     run_meta = {
         "camera_preset": args.camera_preset,
         "camera_keys": list(camera_keys),
@@ -440,7 +494,8 @@ def main() -> None:
         "weight_decay": args.weight_decay,
         "kl_weight": args.kl_weight,
         "seed": args.seed,
-        "use_bf16_amp": use_amp,
+        "precision": precision,
+        "use_bf16_amp": precision == "bf16",
         "use_torch_compile": use_compile,
         "compile_mode": args.compile_mode if use_compile else None,
         "train_frames": len(train_ds),
@@ -470,13 +525,24 @@ def main() -> None:
             norm_batch = normalizer.normalize_batch(raw_batch, include_action=True)
 
             optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+            with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=amp_dtype is not None):
                 loss, loss_dict = policy.forward(norm_batch)
 
-            loss.backward()
+            if scaler is None:
+                loss.backward()
+            else:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
             grad_norm = clip_grad_norm_(policy.parameters(), args.grad_clip_norm)
-            optimizer.step()
-            scheduler.step()
+            if scaler is None:
+                optimizer.step()
+                scheduler.step()
+            else:
+                scale_before = scaler.get_scale()
+                scaler.step(optimizer)
+                scaler.update()
+                if scaler.get_scale() >= scale_before:
+                    scheduler.step()
 
             running_loss += float(loss.item())
             running_l1 += float(loss_dict["l1_loss"])
