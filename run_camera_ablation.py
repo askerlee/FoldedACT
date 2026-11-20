@@ -231,7 +231,7 @@ def parse_args() -> argparse.Namespace:
     precision = parser.add_mutually_exclusive_group()
     precision.add_argument(
         "--precision", choices=["bf16", "fp16", "no-amp"],
-        help="Training precision for all workers (defaults to FP16 on CUDA, otherwise no AMP)",
+        help="Training precision for all workers (defaults to native BF16 on CUDA, falling back to FP16; no AMP on CPU)",
     )
     precision.add_argument(
         "--no-amp", dest="precision", action="store_const", const="no-amp",

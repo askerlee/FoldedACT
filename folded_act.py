@@ -178,12 +178,14 @@ class FoldedACT(ACT):
                 first + second
                 for first, second in zip(camera_grids[::2], camera_grids[1::2], strict=True)
             ]
+        prefix_positions = self.encoder_1d_feature_pos_embed.weight.unsqueeze(1)
+        camera_pos_grids = [self.encoder_cam_feat_pos_embed(grid).to(prefix_positions) for grid in camera_grids]
         if self.config.spatial_folding:
             camera_grids = [fold_camera_features(grid) for grid in camera_grids]
+            camera_pos_grids = [fold_camera_features(pos) for pos in camera_pos_grids]
         camera_tokens = torch.cat([grid.flatten(2).permute(2, 0, 1) for grid in camera_grids], dim=0)
         encoder_tokens = torch.cat((torch.stack(prefix), camera_tokens), dim=0)
-        prefix_positions = self.encoder_1d_feature_pos_embed.weight.unsqueeze(1)
-        camera_positions = prefix_positions.new_zeros(camera_tokens.shape[0], 1, self.config.dim_model)
+        camera_positions = torch.cat([pos.flatten(2).permute(2, 0, 1) for pos in camera_pos_grids], dim=0)
         encoder_positions = torch.cat((prefix_positions, camera_positions), dim=0)
         memory = self.encoder(encoder_tokens, pos_embed=encoder_positions)
 

@@ -145,13 +145,15 @@ def resolve_precision(requested: str | None, device: torch.device) -> str:
         if requested is not None:
             raise SystemExit(f"--precision {requested} requires CUDA")
         return "no-amp"
-    if requested is None or requested == "fp16":
+    if requested == "fp16":
         return "fp16"
     with torch.cuda.device(device):
         supports_bf16 = torch.cuda.is_bf16_supported(including_emulation=False)
-    if not supports_bf16:
-        raise SystemExit(f"--precision bf16 requires native BF16 support on {device}")
-    return "bf16"
+    if supports_bf16:
+        return "bf16"
+    if requested is None:
+        return "fp16"
+    raise SystemExit(f"--precision bf16 requires native BF16 support on {device}")
 
 
 @contextmanager
@@ -271,7 +273,7 @@ def parse_args() -> argparse.Namespace:
     precision = parser.add_mutually_exclusive_group()
     precision.add_argument(
         "--precision", choices=["bf16", "fp16", "no-amp"],
-        help="Training precision (defaults to FP16 on CUDA, otherwise no AMP)",
+        help="Training precision (defaults to native BF16 on CUDA, falling back to FP16; no AMP on CPU)",
     )
     precision.add_argument(
         "--no-amp", dest="precision", action="store_const", const="no-amp",
