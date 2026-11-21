@@ -266,7 +266,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--eval-freq", type=int, default=1000)
     parser.add_argument(
-        "--save-every", type=int, default=0,
+        "--save-every", type=int, default=5000,
         help="Save and test numbered checkpoints every N steps before 'last' (0 disables)",
     )
     parser.add_argument("--temporal-ensemble-coeff", type=float, default=-0.347)
