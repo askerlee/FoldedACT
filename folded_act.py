@@ -227,7 +227,7 @@ class FoldedACT(ACT):
         camera_grids = [self._camera_grid(grid, index) for index, grid in enumerate(projected_grids)]
         if self.config.camera_overlay and not self.config.early_camera_overlay:
             camera_grids = [
-                reduce(add, (camera_grids[index] for index in group))
+                reduce(add, (camera_grids[index] for index in group)) / math.sqrt(len(group))
                 for group in self.config.camera_groups
             ]
         prefix_positions = self.encoder_1d_feature_pos_embed.weight.unsqueeze(1)
