@@ -76,6 +76,7 @@ def build_act_config(
     camera_overlay: bool = False,
     early_camera_overlay: bool = False,
     sep_swin_for_views: bool | None = None,
+    swin_mlp_ratio: float = 4.0,
 ) -> FoldedACTConfig:
     input_features: dict[str, PolicyFeature] = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
@@ -94,6 +95,7 @@ def build_act_config(
         camera_overlay=camera_overlay,
         early_camera_overlay=early_camera_overlay,
         sep_swin_for_views=swin_after_tokenization if sep_swin_for_views is None else sep_swin_for_views,
+        swin_mlp_ratio=swin_mlp_ratio,
         n_obs_steps=1,
         chunk_size=chunk_size,
         n_action_steps=chunk_size,
@@ -260,6 +262,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Use an independent Swin block per visual stream before folding (default when Swin is enabled)",
     )
+    parser.add_argument(
+        "--swin-mlp-ratio",
+        type=float,
+        default=4.0,
+        help="MLP hidden-dim multiplier inside Swin blocks (0.0 disables the MLP for attention-only Swin)",
+    )
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--steps", type=int, default=15000)
@@ -321,6 +329,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.save_every < 0:
         parser.error("--save-every must be non-negative")
+    if args.swin_mlp_ratio < 0:
+        parser.error("--swin-mlp-ratio must be non-negative")
     if args.temporal_ensemble_max_history < 1:
         parser.error("--temporal-ensemble-max-history must be at least 1")
     if args.camera_overlay:
@@ -377,6 +387,7 @@ def main() -> None:
         f"  Model Config : spatial_folding={args.spatial_folding}, "
         f"swin={args.swin_after_tokenization}, "
         f"sep_swin={args.sep_swin_for_views}, "
+        f"swin_mlp_ratio={args.swin_mlp_ratio}, "
         f"camera_overlay={args.camera_overlay}, "
         f"early_overlay={args.early_camera_overlay}"
     )
@@ -443,6 +454,7 @@ def main() -> None:
         swin_after_tokenization=args.swin_after_tokenization,
         camera_overlay=args.camera_overlay,
         early_camera_overlay=args.early_camera_overlay,
+        swin_mlp_ratio=args.swin_mlp_ratio,
         sep_swin_for_views=args.sep_swin_for_views,
     )
 
@@ -499,6 +511,7 @@ def main() -> None:
         "swin_after_tokenization": act_cfg.swin_after_tokenization,
         "camera_overlay": act_cfg.camera_overlay,
         "early_camera_overlay": act_cfg.early_camera_overlay,
+        "swin_mlp_ratio": act_cfg.swin_mlp_ratio,
         "sep_swin_for_views": act_cfg.sep_swin_for_views,
         "visual_tokens_per_step": visual_tokens,
         "dof_mode": args.dof_mode,

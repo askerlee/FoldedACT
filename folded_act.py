@@ -9,7 +9,7 @@ from lerobot.policies.act.modeling_act import ACT, ACTPolicy, ACTTemporalEnsembl
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from torch import Tensor
-from torchvision.models.swin_transformer import SwinTransformerBlock
+from torchvision.models.swin_transformer import ShiftedWindowAttention, SwinTransformerBlock
 
 
 @PreTrainedConfig.register_subclass("folded_act")
@@ -21,6 +21,24 @@ class FoldedACTConfig(ACTConfig):
     camera_overlay: bool = False
     early_camera_overlay: bool = False
     sep_swin_for_views: bool = False
+    swin_mlp_ratio: float = 4.0
+
+
+class SwinAttentionOnlyBlock(torch.nn.Module):
+    """Shifted-window self-attention residual block without the trailing MLP."""
+
+    def __init__(self, dim: int, num_heads: int, window_size: list[int], shift_size: list[int]) -> None:
+        super().__init__()
+        self.norm1 = torch.nn.LayerNorm(dim)
+        self.attn = ShiftedWindowAttention(
+            dim=dim,
+            window_size=window_size,
+            shift_size=shift_size,
+            num_heads=num_heads,
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return x + self.attn(self.norm1(x))
 
 
 def fold_camera_features(features: Tensor) -> Tensor:
@@ -49,6 +67,8 @@ class FoldedACT(ACT):
                     raise ValueError("Late camera overlay requires Swin.")
             if config.sep_swin_for_views and not use_swin:
                 raise ValueError("Separate Swin blocks require Swin and at least one input camera.")
+            if config.swin_mlp_ratio < 0:
+                raise ValueError("swin_mlp_ratio must be non-negative.")
         super().__init__(config)
         use_early_overlay = (
             isinstance(config, FoldedACTConfig)
@@ -94,12 +114,21 @@ class FoldedACT(ACT):
                 widened.bias.copy_(conv1.bias)
         self.backbone.conv1 = widened
 
-    def _make_swin(self) -> SwinTransformerBlock:
+    def _make_swin(self) -> torch.nn.Module:
+        mlp_ratio = self.config.swin_mlp_ratio if isinstance(self.config, FoldedACTConfig) else 4.0
+        if mlp_ratio == 0:
+            return SwinAttentionOnlyBlock(
+                dim=self.config.dim_model,
+                num_heads=self.config.n_heads,
+                window_size=[4, 4],
+                shift_size=[2, 2],
+            )
         return SwinTransformerBlock(
             dim=self.config.dim_model,
             num_heads=self.config.n_heads,
             window_size=[4, 4],
             shift_size=[2, 2],
+            mlp_ratio=mlp_ratio,
         )
 
     def _project_camera_grid(self, images: Tensor) -> Tensor:
