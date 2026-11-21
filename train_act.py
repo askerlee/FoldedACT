@@ -225,6 +225,12 @@ def parse_args() -> argparse.Namespace:
         choices=list(CAMERA_PRESETS.keys()),
         help="Camera subset preset from policy/STEA_dataset_distribution_and_act_analysis.md",
     )
+    parser.add_argument(
+        "--4cams-alt-order",
+        dest="four_cams_alt_order",
+        action="store_true",
+        help="Order all_4cams as top, left, front, right (overlay pairs: top + left, front + right)",
+    )
     parser.add_argument("--dataset-root", type=str, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--cache-dir", type=str, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--output-dir", type=str, default="")
@@ -333,6 +339,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--swin-mlp-ratio must be non-negative")
     if args.temporal_ensemble_max_history < 1:
         parser.error("--temporal-ensemble-max-history must be at least 1")
+    if args.four_cams_alt_order and args.camera_preset != "all_4cams":
+        parser.error("--4cams-alt-order requires --camera-preset all_4cams")
     if args.camera_overlay:
         if len(CAMERA_PRESETS[args.camera_preset]) not in (2, 4):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
@@ -363,6 +371,9 @@ def main() -> None:
     amp_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16}.get(precision)
     scaler = torch.amp.GradScaler("cuda") if precision == "fp16" else None
     camera_keys = CAMERA_PRESETS[args.camera_preset]
+    if args.four_cams_alt_order:
+        top, front, left, right = camera_keys
+        camera_keys = (top, left, front, right)
 
     now = datetime.now()
     ts = now.strftime("%Y%m%d_%H%M%S")
