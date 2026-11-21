@@ -196,10 +196,10 @@ def parse_args() -> argparse.Namespace:
         choices=list(CAMERA_PRESETS.keys()),
     )
     parser.add_argument(
-        "--4cams-alt-order",
-        dest="four_cams_alt_order",
-        action="store_true",
-        help="Order all_4cams as top, left, front, right (overlay pairs: top + left, front + right)",
+        "--4cams-overlay-ablation",
+        dest="four_cams_overlay_ablation",
+        choices=("alt-order", "alt-sum"),
+        help="alt-order: top + left, front + right; alt-sum: top + front + right, left alone (post-Swin overlay only)",
     )
     parser.add_argument("--gpus", nargs="+", default=["0", "1"], help="CUDA device IDs for worker pool")
     parser.add_argument("--steps", type=int, default=15000)
@@ -278,8 +278,10 @@ def parse_args() -> argparse.Namespace:
     overlay_presets = [preset for preset in DEFAULT_PRESET_ORDER if len(CAMERA_PRESETS[preset]) in (2, 4)]
     if args.presets is None:
         args.presets = overlay_presets if args.camera_overlay else DEFAULT_PRESET_ORDER
-    if args.four_cams_alt_order and "all_4cams" not in args.presets:
-        parser.error("--4cams-alt-order requires all_4cams in --presets")
+    if args.four_cams_overlay_ablation and "all_4cams" not in args.presets:
+        parser.error("--4cams-overlay-ablation requires all_4cams in --presets")
+    if args.four_cams_overlay_ablation == "alt-sum" and (not args.camera_overlay or args.early_camera_overlay):
+        parser.error("--4cams-overlay-ablation alt-sum requires post-Swin --camera-overlay")
     if args.camera_overlay:
         if any(preset not in overlay_presets for preset in args.presets):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
@@ -362,8 +364,8 @@ def main() -> None:
             cmd.append("--spatial-folding" if args.spatial_folding else "--no-spatial-folding")
             if not args.swin_after_tokenization:
                 cmd.append("--no-swin-after-tokenization")
-            if args.four_cams_alt_order and preset == "all_4cams":
-                cmd.append("--4cams-alt-order")
+            if args.four_cams_overlay_ablation and preset == "all_4cams":
+                cmd.extend(["--4cams-overlay-ablation", args.four_cams_overlay_ablation])
             if args.camera_overlay:
                 cmd.append("--camera-overlay")
             if args.early_camera_overlay:

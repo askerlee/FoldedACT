@@ -1,5 +1,7 @@
 import math
 from dataclasses import dataclass
+from functools import reduce
+from operator import add
 
 import torch
 import torch.nn.functional as F
@@ -11,6 +13,8 @@ from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from torch import Tensor
 from torchvision.models.swin_transformer import ShiftedWindowAttention, SwinTransformerBlock
 
+from .splits_and_configs import CAM_FRONT, CAM_LEFT, CAM_RIGHT, CAM_TOP
+
 
 @PreTrainedConfig.register_subclass("folded_act")
 @dataclass
@@ -19,9 +23,22 @@ class FoldedACTConfig(ACTConfig):
     swin_after_tokenization: bool = True
     swin_before_folding: bool = False
     camera_overlay: bool = False
+    four_cams_overlay_ablation: str | None = None
     early_camera_overlay: bool = False
     sep_swin_for_views: bool = False
     swin_mlp_ratio: float = 4.0
+
+    @property
+    def camera_groups(self) -> tuple[tuple[int, ...], ...]:
+        camera_keys = tuple(self.image_features)
+        if self.four_cams_overlay_ablation == "alt-sum":
+            return (
+                tuple(camera_keys.index(key) for key in (CAM_TOP, CAM_FRONT, CAM_RIGHT)),
+                (camera_keys.index(CAM_LEFT),),
+            )
+        group_size = 2 if self.camera_overlay else 1
+        indices = tuple(range(len(camera_keys)))
+        return tuple(indices[start : start + group_size] for start in range(0, len(indices), group_size))
 
 
 class SwinAttentionOnlyBlock(torch.nn.Module):
@@ -60,6 +77,12 @@ class FoldedACT(ACT):
             and (config.swin_after_tokenization or (config.spatial_folding and config.swin_before_folding))
         )
         if isinstance(config, FoldedACTConfig):
+            if config.four_cams_overlay_ablation == "alt-sum" and (
+                not config.camera_overlay
+                or config.early_camera_overlay
+                or set(config.image_features) != {CAM_TOP, CAM_FRONT, CAM_LEFT, CAM_RIGHT}
+            ):
+                raise ValueError("alt-sum requires post-Swin overlay with top, front, left, and right cameras.")
             if config.camera_overlay:
                 if len(config.image_features) not in (2, 4):
                     raise ValueError("Camera overlay requires two or four input cameras.")
@@ -204,8 +227,8 @@ class FoldedACT(ACT):
         camera_grids = [self._camera_grid(grid, index) for index, grid in enumerate(projected_grids)]
         if self.config.camera_overlay and not self.config.early_camera_overlay:
             camera_grids = [
-                first + second
-                for first, second in zip(camera_grids[::2], camera_grids[1::2], strict=True)
+                reduce(add, (camera_grids[index] for index in group))
+                for group in self.config.camera_groups
             ]
         prefix_positions = self.encoder_1d_feature_pos_embed.weight.unsqueeze(1)
         camera_pos_grids = [self.encoder_cam_feat_pos_embed(grid).to(prefix_positions) for grid in camera_grids]

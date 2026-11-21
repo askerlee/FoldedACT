@@ -74,6 +74,7 @@ def build_act_config(
     spatial_folding: bool = True,
     swin_after_tokenization: bool = True,
     camera_overlay: bool = False,
+    four_cams_overlay_ablation: str | None = None,
     early_camera_overlay: bool = False,
     sep_swin_for_views: bool | None = None,
     swin_mlp_ratio: float = 0.0,
@@ -93,6 +94,7 @@ def build_act_config(
         spatial_folding=spatial_folding,
         swin_after_tokenization=swin_after_tokenization,
         camera_overlay=camera_overlay,
+        four_cams_overlay_ablation=four_cams_overlay_ablation,
         early_camera_overlay=early_camera_overlay,
         sep_swin_for_views=swin_after_tokenization if sep_swin_for_views is None else sep_swin_for_views,
         swin_mlp_ratio=swin_mlp_ratio,
@@ -226,10 +228,10 @@ def parse_args() -> argparse.Namespace:
         help="Camera subset preset from policy/STEA_dataset_distribution_and_act_analysis.md",
     )
     parser.add_argument(
-        "--4cams-alt-order",
-        dest="four_cams_alt_order",
-        action="store_true",
-        help="Order all_4cams as top, left, front, right (overlay pairs: top + left, front + right)",
+        "--4cams-overlay-ablation",
+        dest="four_cams_overlay_ablation",
+        choices=("alt-order", "alt-sum"),
+        help="alt-order: top + left, front + right; alt-sum: top + front + right, left alone (post-Swin overlay only)",
     )
     parser.add_argument("--dataset-root", type=str, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--cache-dir", type=str, default=DEFAULT_CACHE_DIR)
@@ -339,8 +341,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--swin-mlp-ratio must be non-negative")
     if args.temporal_ensemble_max_history < 1:
         parser.error("--temporal-ensemble-max-history must be at least 1")
-    if args.four_cams_alt_order and args.camera_preset != "all_4cams":
-        parser.error("--4cams-alt-order requires --camera-preset all_4cams")
+    if args.four_cams_overlay_ablation and args.camera_preset != "all_4cams":
+        parser.error("--4cams-overlay-ablation requires --camera-preset all_4cams")
+    if args.four_cams_overlay_ablation == "alt-sum" and (not args.camera_overlay or args.early_camera_overlay):
+        parser.error("--4cams-overlay-ablation alt-sum requires post-Swin --camera-overlay")
     if args.camera_overlay:
         if len(CAMERA_PRESETS[args.camera_preset]) not in (2, 4):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
@@ -371,7 +375,7 @@ def main() -> None:
     amp_dtype = {"bf16": torch.bfloat16, "fp16": torch.float16}.get(precision)
     scaler = torch.amp.GradScaler("cuda") if precision == "fp16" else None
     camera_keys = CAMERA_PRESETS[args.camera_preset]
-    if args.four_cams_alt_order:
+    if args.four_cams_overlay_ablation == "alt-order":
         top, front, left, right = camera_keys
         camera_keys = (top, left, front, right)
 
@@ -400,6 +404,7 @@ def main() -> None:
         f"sep_swin={args.sep_swin_for_views}, "
         f"swin_mlp_ratio={args.swin_mlp_ratio}, "
         f"camera_overlay={args.camera_overlay}, "
+        f"4cams_overlay_ablation={args.four_cams_overlay_ablation}, "
         f"early_overlay={args.early_camera_overlay}"
     )
     print(
@@ -464,6 +469,7 @@ def main() -> None:
         spatial_folding=args.spatial_folding,
         swin_after_tokenization=args.swin_after_tokenization,
         camera_overlay=args.camera_overlay,
+        four_cams_overlay_ablation=args.four_cams_overlay_ablation,
         early_camera_overlay=args.early_camera_overlay,
         swin_mlp_ratio=args.swin_mlp_ratio,
         sep_swin_for_views=args.sep_swin_for_views,
@@ -506,8 +512,8 @@ def main() -> None:
 
     visual_tokens = 0
     stride = 16 if act_cfg.replace_final_stride_with_dilation else 32
-    for camera_key in camera_keys[::2] if act_cfg.camera_overlay else camera_keys:
-        _, height, width = train_ds.image_shapes[camera_key]
+    for group in act_cfg.camera_groups:
+        _, height, width = train_ds.image_shapes[camera_keys[group[0]]]
         feature_rows = (height + stride - 1) // stride
         feature_cols = (width + stride - 1) // stride
         if act_cfg.spatial_folding:
@@ -521,6 +527,7 @@ def main() -> None:
         "spatial_folding": act_cfg.spatial_folding,
         "swin_after_tokenization": act_cfg.swin_after_tokenization,
         "camera_overlay": act_cfg.camera_overlay,
+        "four_cams_overlay_ablation": act_cfg.four_cams_overlay_ablation,
         "early_camera_overlay": act_cfg.early_camera_overlay,
         "swin_mlp_ratio": act_cfg.swin_mlp_ratio,
         "sep_swin_for_views": act_cfg.sep_swin_for_views,
@@ -565,12 +572,19 @@ def main() -> None:
             "metrics": metrics,
         }, out_dir / "snapshot_test" / f"step_{step:06d}.json")
         closing = metrics["by_phase"].get("closing_transition")
-        if closing is not None:
-            if wandb_run is not None:
-                wandb_run.log({
+        if wandb_run is not None:
+            test_log = {
+                "test/overall_te_pos_l2_mm": metrics["temporal_ensemble_metrics"]["pos_l2_mm"],
+            }
+            if closing is not None:
+                test_log.update({
                     "test/closing_te_pos_l1_mm": closing["pos_l1_mm"],
                     "test/closing_step0_pos_l1_mm": closing["step0_metrics"]["pos_l1_mm"],
-                }, step=step)
+                    "test/closing_te_pos_l2_mm": closing["pos_l2_mm"],
+                    "test/closing_gripper_acc_pct": closing["gripper_acc_pct"],
+                })
+            wandb_run.log(test_log, step=step)
+        if closing is not None:
             print(f"  -> [TEST @ step {step:5d}] Closing Pos L1={closing['pos_l1_mm']:.2f} mm", flush=True)
 
     history_path = out_dir / "train_history.jsonl"

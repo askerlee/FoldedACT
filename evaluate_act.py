@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 
+from .folded_act import FoldedACTConfig
 from .splits_and_configs import CAMERA_SHORT_NAMES, EPISODE_BAG_COUNT, SubspaceSpec
 from .stea_act_dataset import STEAACTDataset
 
@@ -341,11 +342,16 @@ def evaluate_policy_on_dataset(
         attn_chunk = np.concatenate(all_attn_chunk_mean, axis=0)  # (N, K_total)
         attn_s0 = np.concatenate(all_attn_step0, axis=0)          # (N, K_total)
         k_total = attn_chunk.shape[1]
-        group_size = 2 if getattr(policy.config, "camera_overlay", False) else 1
+        if isinstance(policy.config, FoldedACTConfig):
+            model_camera_keys = tuple(policy.config.image_features)
+            camera_groups = tuple(
+                tuple(model_camera_keys[index] for index in group) for group in policy.config.camera_groups
+            )
+        else:
+            camera_groups = tuple((key,) for key in camera_keys)
         camera_labels = {
             " + ".join(group): " + ".join(CAMERA_SHORT_NAMES.get(key, key) for key in group)
-            for start in range(0, len(camera_keys), group_size)
-            for group in (camera_keys[start : start + group_size],)
+            for group in camera_groups
         }
         tokens_per_cam = (k_total - 2) // max(len(camera_labels), 1)
 
