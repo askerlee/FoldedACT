@@ -404,7 +404,7 @@ def main() -> None:
         gripper_open_threshold=args.gripper_open_threshold,
     )
 
-    ds_kwargs = dict(
+    ds_kwargs: dict[str, Any] = dict(
         camera_keys=camera_keys,
         chunk_size=args.chunk_size,
         dof_mode=args.dof_mode,
