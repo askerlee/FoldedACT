@@ -15,7 +15,7 @@ from __future__ import annotations
 import fcntl
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TypedDict
 
 import av
 import numpy as np
@@ -37,6 +37,20 @@ IMAGENET_STD = np.array([[[0.229]], [[0.224]], [[0.225]]], dtype=np.float32)
 DEFAULT_CACHE_DIR = str(
     Path(__file__).resolve().parents[1] / "outputs" / "STEA_pick_success" / "act_frame_cache"
 )
+
+
+class ReconstructedTrajectories(TypedDict):
+    subspace: SubspaceSpec
+    state: np.ndarray
+    action: np.ndarray
+    raw_state_16d: np.ndarray
+    raw_action_16d_fixed: np.ndarray
+    episode_index: np.ndarray
+    frame_index: np.ndarray
+    abs_index: np.ndarray
+    timestamp: np.ndarray
+    ep_starts: np.ndarray
+    ep_ends: np.ndarray
 
 
 def ensure_video_frame_cache(
@@ -144,7 +158,7 @@ def load_reconstructed_trajectories(
     gripper_mode: str = "binary",
     gripper_shift: int = 1,
     gripper_open_threshold: float = 0.70,
-) -> dict[str, np.ndarray | SubspaceSpec]:
+) -> ReconstructedTrajectories:
     """Load full tabular trajectories (10,675 frames), reconstruct right gripper, and slice subspace."""
     dataset_root = Path(dataset_root)
     subspace = get_subspace_spec(dof_mode)
@@ -220,7 +234,7 @@ class STEAACTDataset(Dataset):
         gripper_open_threshold: float = 0.70,
         dataset_root: str | Path = DEFAULT_DATASET_ROOT,
         cache_dir: str | Path = DEFAULT_CACHE_DIR,
-        trajectories: dict | None = None,
+        trajectories: ReconstructedTrajectories | None = None,
     ) -> None:
         super().__init__()
         self.dataset_root = Path(dataset_root)
