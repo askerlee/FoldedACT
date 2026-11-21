@@ -41,24 +41,29 @@ Both runs use `top + left` and are reported separately from the 5,000-step ACT c
 
 ### Swin Layer Ablation: Four-Camera Overlay Test Results
 
-The **Standard** camera order is `top, front, left, right` for `folded_overlay_sepswin_4cams_pos` (MLP ratio `4`), `folded_overlay_sepswin_nomlp_4cams_pos` (MLP ratio `0`), and `folded_sepswin_nomlp_4cams_pos` (overlay off). The **Alternate** order is `top, left, front, right` for `folded_overlay_sepswin_nomlp_4cams_altorder` (overlay on, MLP ratio `0`). All snapshots were evaluated on the held-out test split (`11` episodes, `970` frames) with temporal ensemble coefficient `-0.347` and `max_history=3`.
+The `default` overlay mode uses `top, front, left, right` for `folded_overlay_sepswin_4cams_pos` (MLP ratio `4`) and `folded_overlay_sepswin_nomlp_4cams_pos` (MLP ratio `0`). The `alt-order` variant keeps the default overlay operation but uses `top, left, front, right` (`folded_overlay_sepswin_nomlp_4cams_altorder`). Both `alt-sum` (`folded_overlay_sepswin_nomlp_4cams_altsum`) and overlay off (`folded_sepswin_nomlp_4cams_pos`) keep the default camera order. All snapshots were evaluated on the held-out test split (`11` episodes, `970` frames) with temporal ensemble coefficient `-0.347` and `max_history=3`.
 
-| Camera Overlay | Camera Order | `swin-mlp-ratio` | Checkpoint Step | Chunk Norm L1 $\downarrow$ | TE Pos L2 (`mm`) $\downarrow$ | TE Closing Pos L1 (`mm`) $\downarrow$ | TE Rot (`deg`) $\downarrow$ | TE Gripper Acc (`%`) $\uparrow$ | TE Gripper F1 (`%`) $\uparrow$ | Grasp Timing MAE (`frames`) $\downarrow$ |
+**How `alt-sum` works:** After per-camera Swin processing and before spatial folding, the model adds the `top`, `front`, and `right` feature grids elementwise and divides by $\sqrt{3}$. It keeps the `left` grid unchanged as the second stream. In contrast, `default` forms two pairs (`top` with `front`, `left` with `right`) and divides each pair's sum by $\sqrt{2}$.
+
+| Camera Overlay | Overlay Mode | `swin-mlp-ratio` | Checkpoint Step | Chunk Norm L1 $\downarrow$ | TE Pos L2 (`mm`) $\downarrow$ | TE Closing Pos L1 (`mm`) $\downarrow$ | TE Rot (`deg`) $\downarrow$ | TE Gripper Acc (`%`) $\uparrow$ | TE Gripper F1 (`%`) $\uparrow$ | Grasp Timing MAE (`frames`) $\downarrow$ |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| On | Standard | `4` | `5000` | `0.3198` | `37.35` | `22.83` | `6.72` | `96.70` | `96.50` | `1.36` |
-| On | Standard | `4` | `10000` | `0.3087` | `37.57` | `23.92` | `6.57` | `96.39` | `96.18` | `1.55` |
-| On | Standard | `4` | `15000` | `0.3081` | `37.40` | `24.17` | `6.58` | `96.70` | `96.50` | `1.45` |
-| On | Standard | `0` | `5000` | `0.3153` | `36.46` | `21.43` | `6.68` | `97.94` | `97.79` | `1.18` |
-| On | Standard | `0` | `10000` | `0.3070` | `34.84` | `21.98` | `6.58` | `96.70` | `96.53` | `1.27` |
-| On | Standard | `0` | `15000` | `0.3073` | `34.85` | `21.91` | `6.56` | `96.60` | `96.42` | `1.36` |
-| On | Alternate | `0` | `5000` | `0.3075` | `31.95` | `21.33` | `5.74` | `98.04` | `97.88` | `1.27` |
-| On | Alternate | `0` | `10000` | `0.3048` | `32.40` | `21.83` | `5.82` | `97.53` | `97.36` | `1.18` |
-| On | Alternate | `0` | `15000` | `0.3041` | `32.26` | `21.62` | `5.88` | `97.32` | `97.14` | `1.36` |
-| Off | Standard | `0` | `5000` | `0.3133` | `33.19` | `19.77` | `6.03` | `96.80` | `96.63` | `1.18` |
-| Off | Standard | `0` | `10000` | `0.3108` | `33.04` | `20.42` | `5.90` | `96.70` | `96.51` | `1.27` |
-| Off | Standard | `0` | `15000` | `0.3086` | `33.23` | `20.42` | `5.93` | `96.60` | `96.40` | `1.36` |
+| On | `default` | `4` | `5000` | `0.3198` | `37.35` | `22.83` | `6.72` | `96.70` | `96.50` | `1.36` |
+| On | `default` | `4` | `10000` | `0.3087` | `37.57` | `23.92` | `6.57` | `96.39` | `96.18` | `1.55` |
+| On | `default` | `4` | `15000` | `0.3081` | `37.40` | `24.17` | `6.58` | `96.70` | `96.50` | `1.45` |
+| On | `default` | `0` | `5000` | `0.3153` | `36.46` | `21.43` | `6.68` | `97.94` | `97.79` | `1.18` |
+| On | `default` | `0` | `10000` | `0.3070` | `34.84` | `21.98` | `6.58` | `96.70` | `96.53` | `1.27` |
+| On | `default` | `0` | `15000` | `0.3073` | `34.85` | `21.91` | `6.56` | `96.60` | `96.42` | `1.36` |
+| On | `alt-order` | `0` | `5000` | `0.3075` | `31.95` | `21.33` | `5.74` | `98.04` | `97.88` | `1.27` |
+| On | `alt-order` | `0` | `10000` | `0.3048` | `32.40` | `21.83` | `5.82` | `97.53` | `97.36` | `1.18` |
+| On | `alt-order` | `0` | `15000` | `0.3041` | `32.26` | `21.62` | `5.88` | `97.32` | `97.14` | `1.36` |
+| On | `alt-sum` | `0` | `5000` | `0.3126` | `31.75` | `20.29` | `5.78` | `96.80` | `96.63` | `1.18` |
+| On | `alt-sum` | `0` | `10000` | `0.3041` | `30.88` | `20.40` | `5.70` | `96.80` | `96.63` | `1.45` |
+| On | `alt-sum` | `0` | `15000` | `0.3033` | `30.95` | `20.80` | `5.74` | `97.01` | `96.82` | `1.27` |
+| Off | N/A | `0` | `5000` | `0.3133` | `33.19` | `19.77` | `6.03` | `96.80` | `96.63` | `1.18` |
+| Off | N/A | `0` | `10000` | `0.3108` | `33.04` | `20.42` | `5.90` | `96.70` | `96.51` | `1.27` |
+| Off | N/A | `0` | `15000` | `0.3086` | `33.23` | `20.42` | `5.93` | `96.60` | `96.40` | `1.36` |
 
-With overlay on and standard camera order, removing the MLP reduced test closing-phase position L1 at all three matched checkpoints: `22.83` to `21.43 mm` at `5000` steps, `23.92` to `21.98 mm` at `10000` steps, and `24.17` to `21.91 mm` at `15000` steps. The alternate-order overlay run had lower overall TE position L2 than either standard-order no-MLP run at all three checkpoints, but higher closing-phase position L1 than the overlay-off run.
+With the `default` overlay mode, removing the MLP reduced test closing-phase position L1 at all three matched checkpoints: `22.83` to `21.43 mm` at `5000` steps, `23.92` to `21.98 mm` at `10000` steps, and `24.17` to `21.91 mm` at `15000` steps. The `alt-sum` run had the lowest overall TE position L2 at all three checkpoints. It also had lower closing-phase position L1 than `alt-order` at all three, while the comparison with overlay off varied by checkpoint.
 
 ### Swin Layer Ablation: Two-Camera Overlay Test Results
 
@@ -132,6 +137,7 @@ These results use the same checkpoint selection and metrics, with temporal ensem
 | **`folded_overlay_sepswin_4cams_pos`** | `39.85` | `48.13` | `23.79` | `30.00` | `95.70` | `96.39` |
 | **`folded_overlay_sepswin_nomlp_4cams_pos`** | `37.95` | `43.61` | `21.90` | `27.84` | `95.70` | `96.60` |
 | **`folded_overlay_sepswin_nomlp_4cams_altorder`** | `31.95` | `39.53` | `19.77` | `31.09` | `97.85` | `95.98` |
+| **`folded_overlay_sepswin_nomlp_4cams_altsum`** | `31.46` | `41.31` | `20.53` | `27.07` | `96.77` | `96.91` |
 | **`folded_sepswin_4cams_pos`** | `33.35` | `45.50` | `22.47` | `29.30` | `97.85` | `97.84` |
 | **`folded_sepswin_nomlp_4cams_pos`** | `35.02` | `40.68` | `20.42` | `27.94` | `95.70` | `96.70` |
 
