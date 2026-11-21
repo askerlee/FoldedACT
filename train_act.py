@@ -267,7 +267,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-freq", type=int, default=1000)
     parser.add_argument(
         "--save-every", type=int, default=0,
-        help="Save numbered checkpoints every N steps before the final 'last' checkpoint (0 disables)",
+        help="Save and test numbered checkpoints every N steps before 'last' (0 disables)",
     )
     parser.add_argument("--temporal-ensemble-coeff", type=float, default=-0.347)
     parser.add_argument("--temporal-ensemble-max-history", type=int, default=3)
@@ -532,6 +532,23 @@ def main() -> None:
     save_json(run_meta, out_dir / "run_config.json")
     wandb_run = init_wandb_run(args, out_dir, run_meta)
 
+    def record_snapshot_test(step: int, metrics: dict[str, Any]) -> None:
+        save_json({
+            "split": "test",
+            "checkpoint_step": step,
+            "coefficient": args.temporal_ensemble_coeff,
+            "max_history": args.temporal_ensemble_max_history,
+            "metrics": metrics,
+        }, out_dir / "snapshot_test" / f"step_{step:06d}.json")
+        closing = metrics["by_phase"].get("closing_transition")
+        if closing is not None:
+            if wandb_run is not None:
+                wandb_run.log({
+                    "test/closing_te_pos_l1_mm": closing["pos_l1_mm"],
+                    "test/closing_step0_pos_l1_mm": closing["step0_metrics"]["pos_l1_mm"],
+                }, step=step)
+            print(f"  -> [TEST @ step {step:5d}] Closing Pos L1={closing['pos_l1_mm']:.2f} mm", flush=True)
+
     history_path = out_dir / "train_history.jsonl"
     best_val_score = float("inf")
     best_val_step = 0
@@ -626,6 +643,15 @@ def main() -> None:
                 snapshot_dir = out_dir / "checkpoints" / f"step_{step:06d}"
                 save_checkpoint_bundle(snapshot_dir, policy, stats, {"step": step})
                 print(f"  -> Saved snapshot: {snapshot_dir}", flush=True)
+                try:
+                    with torch.random.fork_rng(devices=[]), unwrapped_policy_model(policy, raw_model):
+                        snapshot_test_eval = evaluate(
+                            policy, test_ds, normalizer, batch_size=args.batch_size,
+                            num_workers=min(args.num_workers, 2), record_attention=False,
+                        )
+                finally:
+                    policy.train()
+                record_snapshot_test(step, snapshot_test_eval)
 
             if step % args.eval_freq == 0 or step == args.steps:
                 with unwrapped_policy_model(policy, raw_model):
@@ -708,6 +734,8 @@ def main() -> None:
         last_test_eval = evaluate(
             policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
         )
+        if args.save_every:
+            record_snapshot_test(args.steps, last_test_eval)
 
         # Reload BEST_VAL checkpoint and evaluate on val & test with cross-attention attribution
         best_ckpt_dir = out_dir / "checkpoints" / "best_val"
