@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+PKG_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PKG_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if __package__ in (None, ""):
+    __package__ = PKG_DIR.name
 
 import torch
 
-from policy.evaluate_act import BatchNormalizer, evaluate_policy_on_dataset, save_json
-from policy.splits_and_configs import DEFAULT_DATASET_ROOT, SPLITS
-from policy.stea_act_dataset import DEFAULT_CACHE_DIR, STEAACTDataset
-from policy2.folded_act import FoldedACTPolicy
+from .evaluate_act import BatchNormalizer, evaluate_policy_on_dataset, save_json
+from .folded_act import FoldedACTPolicy
+from .splits_and_configs import DEFAULT_DATASET_ROOT, SPLITS
+from .stea_act_dataset import DEFAULT_CACHE_DIR, STEAACTDataset
 
 
 def snapshot_checkpoints(run_dir: Path) -> list[Path]:

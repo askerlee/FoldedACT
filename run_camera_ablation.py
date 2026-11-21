@@ -11,12 +11,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+PKG_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PKG_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if __package__ in (None, ""):
+    __package__ = PKG_DIR.name
 
-from policy.evaluate_act import save_json
-from policy.splits_and_configs import (
+from .evaluate_act import save_json
+from .splits_and_configs import (
     ALL_CAMERA_KEYS,
     CAM_FRONT,
     CAM_LEFT,
@@ -26,7 +29,7 @@ from policy.splits_and_configs import (
     DEFAULT_DATASET_ROOT,
     validate_splits,
 )
-from policy.stea_act_dataset import DEFAULT_CACHE_DIR, ensure_video_frame_cache
+from .stea_act_dataset import DEFAULT_CACHE_DIR, ensure_video_frame_cache
 
 # Longest-Processing-Time-first order to minimize makespan across 2 GPUs
 DEFAULT_PRESET_ORDER = [
@@ -441,7 +444,7 @@ def main() -> None:
     print(f"[suite] Saved report MD    : {suite_md_path}")
 
     if args.write_policy_md:
-        md_dir = REPO_ROOT / "policy" / "md"
+        md_dir = PKG_DIR / "md"
         md_dir.mkdir(parents=True, exist_ok=True)
         policy_md_path = md_dir / f"STEA_act_camera_ablation_results_{timestamp}.md"
         policy_md_path.write_text(md_text, encoding="utf-8")

@@ -14,8 +14,8 @@ from torch.utils.data import DataLoader
 
 from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 
-from policy.splits_and_configs import CAMERA_SHORT_NAMES, EPISODE_BAG_COUNT, SubspaceSpec
-from policy.stea_act_dataset import STEAACTDataset
+from .splits_and_configs import CAMERA_SHORT_NAMES, EPISODE_BAG_COUNT, SubspaceSpec
+from .stea_act_dataset import STEAACTDataset
 
 
 class BatchNormalizer:
@@ -167,9 +167,15 @@ def evaluate_policy_on_dataset(
     batch_size: int = 64,
     num_workers: int = 2,
     temporal_ensemble_coeff: float = 0.01,
+    temporal_ensemble_max_history: int | None = None,
     record_attention: bool = True,
 ) -> dict[str, Any]:
     """Run full chunk, step-0, temporal-ensembled rollout, stratified clutter, and attention evaluation."""
+    ensemble_history = dataset.chunk_size
+    if temporal_ensemble_max_history is not None:
+        if temporal_ensemble_max_history < 1:
+            raise ValueError("temporal_ensemble_max_history must be at least 1")
+        ensemble_history = min(ensemble_history, temporal_ensemble_max_history)
     policy.eval()
     subspace = dataset.subspace
     camera_keys = dataset.camera_keys
@@ -260,8 +266,8 @@ def evaluate_policy_on_dataset(
     for ep in dataset.episodes:
         ep_mask = np.flatnonzero(ep_indices == ep)
         # Dataset is ordered sequentially per episode
-        ensembler = ACTTemporalEnsembler(temporal_ensemble_coeff, dataset.chunk_size)
-        ep_chunks_t = torch.from_numpy(pred_chunks[ep_mask])  # (T_ep, S, D)
+        ensembler = ACTTemporalEnsembler(temporal_ensemble_coeff, ensemble_history)
+        ep_chunks_t = torch.from_numpy(pred_chunks[ep_mask, :ensemble_history])  # (T_ep, H, D)
         ep_te_out: list[np.ndarray] = []
         for t in range(ep_chunks_t.shape[0]):
             act_t = ensembler.update(ep_chunks_t[t : t + 1])  # (1, D)
@@ -324,7 +330,10 @@ def evaluate_policy_on_dataset(
             continue
         p_te = summarize_step_errors(te_preds[p_mask], step0_gt[p_mask], subspace)
         p_te["norm_l1_active8d"] = float(np.mean(norm_l1_samples[p_mask]))
-        by_phase[p_name] = p_te
+        by_phase[p_name] = {
+            **p_te,
+            "step0_metrics": summarize_step_errors(step0_pred[p_mask], step0_gt[p_mask], subspace),
+        }
 
     # 6. Cross-attention attribution per token source (latent, proprio_state, each camera)
     attention_summary: dict[str, Any] = {}

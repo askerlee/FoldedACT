@@ -23,7 +23,7 @@ import pyarrow.parquet as pq
 import torch
 from torch.utils.data import Dataset
 
-from policy.splits_and_configs import (
+from .splits_and_configs import (
     ALL_CAMERA_KEYS,
     DEFAULT_DATASET_ROOT,
     EPISODE_BAG_COUNT,
@@ -34,7 +34,9 @@ from policy.splits_and_configs import (
 IMAGENET_MEAN = np.array([[[0.485]], [[0.456]], [[0.406]]], dtype=np.float32)
 IMAGENET_STD = np.array([[[0.229]], [[0.224]], [[0.225]]], dtype=np.float32)
 
-DEFAULT_CACHE_DIR = "/data/xiuchao/biArm/DEM/outputs/STEA_pick_success/act_frame_cache"
+DEFAULT_CACHE_DIR = str(
+    Path(__file__).resolve().parents[1] / "outputs" / "STEA_pick_success" / "act_frame_cache"
+)
 
 
 def ensure_video_frame_cache(

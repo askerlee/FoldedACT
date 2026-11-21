@@ -9,8 +9,10 @@ Grounded in:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
-DEFAULT_DATASET_ROOT = "/data/xiuchao/biArm/DEM/data_STEA/EVAL_24Sep_25Sep_STEA_pick_success"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DATASET_ROOT = str(_REPO_ROOT / "data_STEA" / "EVAL_24Sep_25Sep_STEA_pick_success")
 DEFAULT_REPO_ID = "local/EVAL_24Sep_25Sep_STEA_pick_success"
 
 CAM_TOP = "observation.images.camera_top"

@@ -14,10 +14,13 @@ from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
-# Ensure repo root is importable when executed as `python policy/train_act.py`
-REPO_ROOT = Path(__file__).resolve().parents[1]
+# Allow running directly as `python <pkg>/train_act.py` regardless of folder name
+PKG_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PKG_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if __package__ in (None, ""):
+    __package__ = PKG_DIR.name
 
 import numpy as np
 import torch
@@ -31,20 +34,20 @@ except ImportError:
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
-from policy.evaluate_act import BatchNormalizer, evaluate_policy_on_dataset, save_json
-from policy.splits_and_configs import (
+from .evaluate_act import BatchNormalizer, evaluate_policy_on_dataset, save_json
+from .folded_act import FoldedACT, FoldedACTConfig, FoldedACTPolicy
+from .splits_and_configs import (
     CAMERA_PRESETS,
     DEFAULT_DATASET_ROOT,
     SPLITS,
     validate_splits,
 )
-from policy.stea_act_dataset import (
+from .stea_act_dataset import (
     DEFAULT_CACHE_DIR,
     STEAACTDataset,
     compute_train_stats,
     load_reconstructed_trajectories,
 )
-from policy2.folded_act import FoldedACT, FoldedACTConfig, FoldedACTPolicy
 
 
 def seed_everything(seed: int) -> None:
