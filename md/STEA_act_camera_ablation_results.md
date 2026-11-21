@@ -39,6 +39,31 @@ Both runs use `top + left` and are reported separately from the 5,000-step ACT c
 | **`2cams_top_left` (no overlay)** | `15000` | `39.61` | `0.3089` | `39.31` | `6.44` | `93.81` | `93.63` | `3.82` |
 | **`2cams_top_left` (camera overlay)** | `13000` | `37.66` | `0.3120` | `38.73` | `6.39` | `93.71` | `93.54` | `3.91` |
 
+### Swin Layer Ablation: Four-Camera Overlay Test Results
+
+Both settings use camera overlay with `top + front + left + right`. The fixed-step snapshots come from `folded_overlay_sepswin_4cams_pos` (`swin-mlp-ratio=4`) and `folded_overlay_sepswin_nomlp_4cams_pos` (`swin-mlp-ratio=0`). Both were evaluated on the held-out test split (`11` episodes, `970` frames) with temporal ensemble coefficient `-0.347` and `max_history=3`.
+
+| Setting | `swin-mlp-ratio` | Checkpoint Step | Chunk Norm L1 $\downarrow$ | TE Pos L2 (`mm`) $\downarrow$ | TE Closing Pos L1 (`mm`) $\downarrow$ | TE Rot (`deg`) $\downarrow$ | TE Gripper Acc (`%`) $\uparrow$ | TE Gripper F1 (`%`) $\uparrow$ | Grasp Timing MAE (`frames`) $\downarrow$ |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`folded_overlay_4cams`** | `4` | `5000` | `0.3198` | `37.35` | `22.83` | `6.72` | `96.70` | `96.50` | `1.36` |
+| **`folded_overlay_4cams`** | `4` | `10000` | `0.3087` | `37.57` | `23.92` | `6.57` | `96.39` | `96.18` | `1.55` |
+| **`folded_overlay_4cams`** | `4` | `15000` | `0.3081` | `37.40` | `24.17` | `6.58` | `96.70` | `96.50` | `1.45` |
+| **`folded_overlay_4cams`** | `0` | `5000` | `0.3153` | `36.46` | `21.43` | `6.68` | `97.94` | `97.79` | `1.18` |
+| **`folded_overlay_4cams`** | `0` | `10000` | `0.3070` | `34.84` | `21.98` | `6.58` | `96.70` | `96.53` | `1.27` |
+| **`folded_overlay_4cams`** | `0` | `15000` | `0.3073` | `34.85` | `21.91` | `6.56` | `96.60` | `96.42` | `1.36` |
+
+Removing the MLP reduced test closing-phase position L1 at all three matched checkpoints: `22.83` to `21.43 mm` at `5000` steps, `23.92` to `21.98 mm` at `10000` steps, and `24.17` to `21.91 mm` at `15000` steps.
+
+### Swin Layer Ablation: Two-Camera Overlay Test Results
+
+The fixed-step snapshots for `folded_overlay_sepswin_nomlp_2cams_pos` use camera overlay with `top + left` and `swin-mlp-ratio=0`. They use the same held-out test split and temporal ensemble settings as the four-camera results above.
+
+| `swin-mlp-ratio` | Checkpoint Step | Chunk Norm L1 $\downarrow$ | TE Pos L2 (`mm`) $\downarrow$ | TE Closing Pos L1 (`mm`) $\downarrow$ | TE Rot (`deg`) $\downarrow$ | TE Gripper Acc (`%`) $\uparrow$ | TE Gripper F1 (`%`) $\uparrow$ | Grasp Timing MAE (`frames`) $\downarrow$ |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `0` | `5000` | `0.3174` | `31.39` | `20.63` | `5.55` | `96.49` | `96.32` | `1.45` |
+| `0` | `10000` | `0.3127` | `30.43` | `19.17` | `5.55` | `97.01` | `96.85` | `1.00` |
+| `0` | `15000` | `0.3106` | `30.80` | `19.70` | `5.57` | `97.73` | `97.58` | `1.00` |
+
 ---
 
 ## 3. Test-Split TE Position Error (`mm`) Stratified by Scene Clutter (`bag_count = 1..5`)
@@ -93,7 +118,9 @@ These results use the same checkpoint selection and metrics, with temporal ensem
 | **`folded_sepswin_2cams_pos`** | `35.05` | `40.59` | `20.14` | `26.77` | `95.70` | `96.60` |
 | **`folded_overlay_sepswin_2cams_run2`** | `31.91` | `39.79` | `19.50` | `26.90` | `96.77` | `97.32` |
 | **`folded_overlay_sepswin_2cams_pos`** | `31.51` | `39.50` | `19.60` | `26.23` | `94.62` | `98.04` |
+| **`folded_overlay_sepswin_nomlp_2cams_pos`** | `31.23` | `38.86` | `19.17` | `26.93` | `96.77` | `97.01` |
 | **`folded_overlay_sepswin_4cams_pos`** | `39.85` | `48.13` | `23.79` | `30.00` | `95.70` | `96.39` |
+| **`folded_overlay_sepswin_nomlp_4cams_pos`** | `37.95` | `43.61` | `21.90` | `27.84` | `95.70` | `96.60` |
 | **`folded_sepswin_4cams_pos`** | `33.35` | `45.50` | `22.47` | `29.30` | `97.85` | `97.84` |
 
 ---

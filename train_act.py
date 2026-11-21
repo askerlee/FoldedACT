@@ -76,7 +76,7 @@ def build_act_config(
     camera_overlay: bool = False,
     early_camera_overlay: bool = False,
     sep_swin_for_views: bool | None = None,
-    swin_mlp_ratio: float = 4.0,
+    swin_mlp_ratio: float = 0.0,
 ) -> FoldedACTConfig:
     input_features: dict[str, PolicyFeature] = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
@@ -265,8 +265,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--swin-mlp-ratio",
         type=float,
-        default=4.0,
-        help="MLP hidden-dim multiplier inside Swin blocks (0.0 disables the MLP for attention-only Swin)",
+        default=0.0,
+        help="MLP hidden-dim multiplier inside Swin blocks (default: 0.0, attention-only Swin)",
     )
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=64)
