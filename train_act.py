@@ -786,15 +786,14 @@ def main() -> None:
                 "test_best/te_gripper_f1_pct": bt["gripper_f1_pct"],
                 "test_best/grasp_mae_frames": bt["grasp_timing_mae_frames"],
             }
-            wandb_run.log(best_test_metrics, step=args.steps)
-            wandb_run.summary.update(
-                {
-                    "best_val_step": best_val_step,
-                    "best_val_norm_l1": best_val_score,
-                    "total_train_sec": round(total_train_sec, 2),
-                    **best_test_metrics,
-                }
-            )
+            final_metrics = {
+                "best_val_step": best_val_step,
+                "best_val_norm_l1": best_val_score,
+                "total_train_sec": round(total_train_sec, 2),
+                **best_test_metrics,
+            }
+            wandb_run.log(final_metrics, step=args.steps, commit=True)
+            wandb_run.summary.update(final_metrics)
 
         print(
             f"=== DONE {args.camera_preset} in {total_train_sec / 60.0:.2f} min (best_step={best_val_step}) ===\n"
