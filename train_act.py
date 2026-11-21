@@ -9,7 +9,8 @@ import math
 import random
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -261,6 +262,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=15000)
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--eval-freq", type=int, default=1000)
+    parser.add_argument(
+        "--save-every", type=int, default=0,
+        help="Save numbered checkpoints every N steps before the final 'last' checkpoint (0 disables)",
+    )
+    parser.add_argument("--temporal-ensemble-coeff", type=float, default=-0.347)
+    parser.add_argument("--temporal-ensemble-max-history", type=int, default=3)
     parser.add_argument("--log-freq", type=int, default=100)
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--lr-backbone", type=float, default=1e-5)
@@ -309,6 +316,10 @@ def parse_args() -> argparse.Namespace:
         choices=["online", "offline", "disabled"],
     )
     args = parser.parse_args()
+    if args.save_every < 0:
+        parser.error("--save-every must be non-negative")
+    if args.temporal_ensemble_max_history < 1:
+        parser.error("--temporal-ensemble-max-history must be at least 1")
     if args.camera_overlay:
         if len(CAMERA_PRESETS[args.camera_preset]) not in (2, 4):
             parser.error("--camera-overlay requires 2cams_top_left or all_4cams")
@@ -323,6 +334,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    evaluate = partial(
+        evaluate_policy_on_dataset,
+        temporal_ensemble_coeff=args.temporal_ensemble_coeff,
+        temporal_ensemble_max_history=args.temporal_ensemble_max_history,
+    )
     validate_splits()
     seed_everything(args.seed)
 
@@ -489,7 +505,10 @@ def main() -> None:
         "image_norm": args.image_norm,
         "chunk_size": args.chunk_size,
         "batch_size": args.batch_size,
+        "temporal_ensemble_coeff": args.temporal_ensemble_coeff,
+        "temporal_ensemble_max_history": args.temporal_ensemble_max_history,
         "steps": args.steps,
+        "save_every": args.save_every,
         "warmup_steps": args.warmup_steps,
         "lr": args.lr,
         "lr_backbone": args.lr_backbone,
@@ -514,7 +533,7 @@ def main() -> None:
     best_val_score = float("inf")
     best_val_step = 0
 
-    t_start = time.time()
+    t_start = time.monotonic()
     running_loss = 0.0
     running_l1 = 0.0
     running_kld = 0.0
@@ -551,9 +570,10 @@ def main() -> None:
             running_kld += float(loss_dict.get("kld_loss", 0.0))
             running_count += 1
 
-            if step % args.log_freq == 0 or step == 1:
-                elapsed = time.time() - t_start
+            if step % args.log_freq == 0 or step in (1, args.steps):
+                elapsed = time.monotonic() - t_start
                 steps_per_s = step / max(elapsed, 1e-6)
+                remaining = (args.steps - step) / steps_per_s
                 avg_loss = running_loss / running_count
                 avg_l1 = running_l1 / running_count
                 avg_kld = running_kld / running_count
@@ -568,6 +588,7 @@ def main() -> None:
                     "lr": cur_lr,
                     "steps_per_sec": round(steps_per_s, 2),
                     "elapsed_sec": round(elapsed, 1),
+                    "eta_sec": round(remaining, 1),
                 }
                 with open(history_path, "a", encoding="utf-8") as hf:
                     hf.write(json.dumps(log_rec) + "\n")
@@ -580,13 +601,17 @@ def main() -> None:
                             "train/grad_norm": float(grad_norm),
                             "train/lr": cur_lr,
                             "train/steps_per_sec": steps_per_s,
+                            "train/elapsed_sec": elapsed,
+                            "train/eta_sec": remaining,
                         },
                         step=step,
                     )
                 print(
                     f"[{args.camera_preset} | step {step:5d}/{args.steps}] "
                     f"loss={avg_loss:.4f} (l1={avg_l1:.4f}, kld={avg_kld:.4f}) "
-                    f"lr={cur_lr:.2e} speed={steps_per_s:.1f} it/s",
+                    f"lr={cur_lr:.2e} speed={steps_per_s:.1f} it/s "
+                    f"elapsed={timedelta(seconds=round(elapsed))} "
+                    f"eta={timedelta(seconds=round(remaining))}",
                     flush=True,
                 )
                 running_loss = 0.0
@@ -594,9 +619,14 @@ def main() -> None:
                 running_kld = 0.0
                 running_count = 0
 
+            if args.save_every and step % args.save_every == 0 and step < args.steps:
+                snapshot_dir = out_dir / "checkpoints" / f"step_{step:06d}"
+                save_checkpoint_bundle(snapshot_dir, policy, stats, {"step": step})
+                print(f"  -> Saved snapshot: {snapshot_dir}", flush=True)
+
             if step % args.eval_freq == 0 or step == args.steps:
                 with unwrapped_policy_model(policy, raw_model):
-                    val_res = evaluate_policy_on_dataset(
+                    val_res = evaluate(
                         policy,
                         val_ds,
                         normalizer,
@@ -669,10 +699,10 @@ def main() -> None:
 
         # Evaluate LAST checkpoint on val & test with cross-attention attribution
         print(f"[{args.camera_preset}] Evaluating final ('last' @ step {args.steps}) checkpoint on Val & Test ...")
-        last_val_eval = evaluate_policy_on_dataset(
+        last_val_eval = evaluate(
             policy, val_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
         )
-        last_test_eval = evaluate_policy_on_dataset(
+        last_test_eval = evaluate(
             policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
         )
 
@@ -680,10 +710,10 @@ def main() -> None:
         best_ckpt_dir = out_dir / "checkpoints" / "best_val"
         print(f"[{args.camera_preset}] Evaluating best_val (@ step {best_val_step}) checkpoint on Val & Test ...")
         best_policy = FoldedACTPolicy.from_pretrained(str(best_ckpt_dir)).to(device)
-        best_val_eval = evaluate_policy_on_dataset(
+        best_val_eval = evaluate(
             best_policy, val_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
         )
-        best_test_eval = evaluate_policy_on_dataset(
+        best_test_eval = evaluate(
             best_policy, test_ds, normalizer, batch_size=args.batch_size, num_workers=2, record_attention=True
         )
 

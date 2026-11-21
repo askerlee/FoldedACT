@@ -57,23 +57,37 @@ Both runs use `top + left` and are reported separately from the 5,000-step ACT c
 
 All rows use the `best_val` checkpoint on the held-out test split. Overall gripper accuracy covers all test steps; closing gripper accuracy covers only closing steps. The FoldedACT rows are separate runs, not part of the 5,000-step ACT camera ablation.
 
+Rows labeled `newest 3` use temporal ensemble coefficient `-0.347` and at most three overlapping forecasts. Unlabeled rows use the original full-history ensemble (`0.01`).
+
 | Run | Approach (`>0.70`) Pos L2 (`mm`) | Closing (`0.05..0.70`) Pos L2 (`mm`) | Closing Pos L1 (`mm`) | Lift (`<0.05`) Pos L2 (`mm`) | Closing Gripper Acc (`%`) | Overall Gripper Acc (`%`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`all_4cams`** | `35.06` | `54.26` | `26.53` | `43.79` | `88.17` | `94.54` |
-| **`3cams_active`** | `37.90` | `54.54` | `26.50` | `38.41` | `92.47` | `93.71` |
-| **`2cams_top_left`** | `35.67` | `51.50` | `25.14` | `37.43` | `92.47` | `93.92` |
 | **`1cam_top`** | `37.51` | `54.16` | `25.85` | `38.30` | `94.62` | `93.61` |
 | **`1cam_left`** | `32.78` | `60.03` | `29.80` | `49.73` | `92.47` | `93.40` |
+| **`all_4cams`** | `35.06` | `54.26` | `26.53` | `43.79` | `88.17` | `94.54` |
+| **`all_4cams`** (`newest 3`) | `34.55` | `43.37` | `22.15` | `33.60` | `95.70` | `98.35` |
 | **`folded_act_4cams`** | `45.05` | `54.34` | `26.33` | `37.33` | `92.47` | `94.54` |
+| **`3cams_active`** | `37.90` | `54.54` | `26.50` | `38.41` | `92.47` | `93.71` |
+| **`2cams_top_left`** | `35.67` | `51.50` | `25.14` | `37.43` | `92.47` | `93.92` |
+| **`act_2cams_unfolded_baseline`** | `35.80` | `53.88` | `26.54` | `38.99` | `94.62` | `93.61` |
+| **`act_2cams_unfolded_baseline`** (`newest 3`) | `33.54` | `41.13` | `20.22` | `25.93` | `96.77` | `97.11` |
 | **`folded_overlay_2cams`** | `37.98` | `51.81` | `25.40` | `36.37` | `94.62` | `93.71` |
+| **`folded_sepswin_2cams_pos`** (`newest 3`) | `35.05` | `40.59` | `20.14` | `26.77` | `95.70` | `96.60` |
 | **`folded_overlay_sepswin_2cams`** | `35.13` | `53.50` | `26.40` | `38.31` | `96.77` | `94.02` |
 | **`folded_overlay_sepswin_2cams_run2`** | `34.92` | `51.85` | `25.38` | `36.61` | `94.62` | `93.92` |
-| **`folded_overlay_sepswin_2cams_fp16`** | `35.43` | `52.86` | `26.10` | `36.94` | `95.70` | `94.12` |
+| **`folded_overlay_sepswin_2cams_run2`** (`newest 3`) | `31.91` | `39.79` | `19.50` | `26.90` | `96.77` | `97.32` |
+| **`folded_overlay_sepswin_2cams_pos`** | `35.93` | `54.45` | `26.68` | `38.47` | `96.77` | `94.12` |
+| **`folded_sepswin_2cams_pos`** | `37.21` | `53.79` | `26.14` | `37.59` | `95.70` | `93.61` |
+| **`folded_overlay_sepswin_2cams_pos`** (`newest 3`) | `31.51` | `39.50` | `19.60` | `26.23` | `94.62` | `98.04` |
 | **`folded_overlay_sepswin_4cams`** | `41.65` | `51.98` | `26.01` | `34.82` | `95.70` | `94.33` |
 | **`folded_overlay_sepswin_4cams run2`** | `41.78` | `49.52` | `24.95` | `34.95` | `96.77` | `94.23` |
-| **`folded_overlay_sepswin_4cams_fp16`** | `41.90` | `50.16` | `25.14` | `34.30` | `96.77` | `93.92` |
+| **`folded_overlay_sepswin_4cams_pos`** | `40.83` | `50.94` | `25.09` | `33.88` | `93.55` | `94.23` |
+| **`folded_overlay_sepswin_4cams_pos`** (`newest 3`) | `39.85` | `48.13` | `23.79` | `30.00` | `95.70` | `96.39` |
+| **`folded_sepswin_4cams_pos`** | `35.28` | `52.06` | `25.07` | `37.44` | `94.62` | `94.23` |
+| **`folded_sepswin_4cams_pos`** (`newest 3`) | `33.35` | `45.50` | `22.47` | `29.30` | `97.85` | `97.84` |
 | **`folded_overlayresnet_sepswin_2cams`** | `34.81` | `54.72` | `26.95` | `37.53` | `95.70` | `93.81` |
 | **`folded_overlayresnet_sepswin_4cams`** | `42.40` | `57.36` | `28.04` | `38.34` | `94.62` | `93.81` |
+| **`folded_overlay_sepswin_2cams_fp16`** | `35.43` | `52.86` | `26.10` | `36.94` | `95.70` | `94.12` |
+| **`folded_overlay_sepswin_4cams_fp16`** | `41.90` | `50.16` | `25.14` | `34.30` | `96.77` | `93.92` |
 
 ---
 
